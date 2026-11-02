@@ -290,10 +290,10 @@ function App() {
             <div className="model-card full-width">
               <div className="model-card-header">
                 <span className="model-card-tag">MULTI-MODEL METHODOLOGY</span>
-                <h4>5. The 10-Engine Ensemble (4,500 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
+                <h4>5. The 12-Engine Ensemble (5,500 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
               </div>
               <p>
-                To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>ten distinct analytical engines</strong> (500 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
+                To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>twelve distinct analytical engines</strong> (500 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
               </p>
               <div className="model-engine-list">
                 <div className="model-engine-item">
@@ -333,12 +333,20 @@ function App() {
                   Compresses single-game variance to model chalk, low-volatility baseline expectations.
                 </div>
                 <div className="model-engine-item">
-                  <strong>10. Analytical Gaussian CDF:</strong>
+                  <strong>10. Dynasty Rebuilder vs Contender:</strong>
+                  Models lineup management disparities where contending rosters optimize high floors while rebuilders evaluate youth and soft-tank matchups.
+                </div>
+                <div className="model-engine-item">
+                  <strong>11. Extreme Volatility &amp; Fat-Tail Booms:</strong>
+                  Power-law upper-tail mixture capturing monster 45+ point outlier eruptions alongside early-exit floors.
+                </div>
+                <div className="model-engine-item">
+                  <strong>12. Analytical Gaussian CDF:</strong>
                   Closed-form bivariate normal integration with Poisson-Binomial characteristic convolution for exact, zero-noise win distributions.
                 </div>
               </div>
               <p style={{ marginTop: '10px' }}>
-                <strong>Consensus &amp; Sensitivity Spread:</strong> The large percentage on each pick chip is the consensus average across all 10 engines (balanced via Sinkhorn-Knopp doubly-stochastic normalization so every column and row sums to exactly 100.0%). The small range underneath (e.g. <code>75%–87%</code>) shows model sensitivity—the lowest and highest probability found across the 10 different engine perspectives.
+                <strong>Consensus &amp; Sensitivity Spread:</strong> The large percentage on each pick chip is the consensus average across all 12 engines (balanced via Sinkhorn-Knopp doubly-stochastic normalization so every column and row sums to exactly 100.0%). The small range underneath (e.g. <code>75%–87%</code>) shows model sensitivity—the lowest and highest probability found across the 12 different engine perspectives.
               </p>
             </div>
 

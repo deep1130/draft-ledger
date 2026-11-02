@@ -38,6 +38,7 @@ const MODELS = [
     attritionScale: 1.0,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -50,6 +51,7 @@ const MODELS = [
     attritionScale: 1.0,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -62,6 +64,7 @@ const MODELS = [
     attritionScale: 0.95,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -74,6 +77,7 @@ const MODELS = [
     attritionScale: 1.0,
     useStrongBayesianForm: true,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -86,6 +90,7 @@ const MODELS = [
     attritionScale: 1.5,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -98,6 +103,7 @@ const MODELS = [
     attritionScale: 2.0,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -110,6 +116,7 @@ const MODELS = [
     attritionScale: 1.0,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -122,6 +129,7 @@ const MODELS = [
     attritionScale: 1.0,
     useStrongBayesianForm: false,
     useYouthTrajectory: true,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 1.0,
   },
   {
@@ -134,7 +142,34 @@ const MODELS = [
     attritionScale: 0.75,
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
     dispersionScale: 0.75,
+  },
+  {
+    key: 'rebuilder-contender',
+    label: 'Dynasty rebuilder vs contender management',
+    sampler: 'gamma',
+    teamCorrSd: 0.18,
+    rosOffenseSd: 0.10,
+    rosPlayerScale: 1.05,
+    attritionScale: 1.05,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: true,
+    dispersionScale: 1.0,
+  },
+  {
+    key: 'fat-tail',
+    label: 'Extreme volatility & fat-tail booms',
+    sampler: 'fat-tail',
+    teamCorrSd: 0.25,
+    rosOffenseSd: 0.14,
+    rosPlayerScale: 1.30,
+    attritionScale: 1.15,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
+    dispersionScale: 1.25,
   },
 ] as const
 
@@ -966,6 +1001,18 @@ function samplePlayerRemainingPoints(
     const logNormalUnit = Math.exp(-0.5 * sigma2 + sigma * rng.normal())
     const survivalAdjust = pw.state === 3 ? (earlyExit ? 0.20 : 1.0333333333333334) : 1
     multiplier = teamMult * logNormalUnit * survivalAdjust
+  } else if (sampler === 'fat-tail') {
+    const u = rng.next()
+    if (u < 0.05 && pw.state === 3) {
+      multiplier = teamMult * (0.05 + 0.20 * rng.next())
+    } else if (u > 0.94 && pw.state === 3) {
+      const boom = 2.8 + Math.pow(Math.max(rng.next(), 0.001), -0.32) - 1
+      multiplier = teamMult * Math.min(5.5, boom)
+    } else {
+      const shape = mu / scale
+      const idioSample = sampleGamma(shape, rng) * scale
+      multiplier = (idioSample / mu) * teamMult * 0.95
+    }
   } else {
     const shape = mu / scale
     const idioSample = sampleGamma(shape, rng) * scale
@@ -1014,6 +1061,39 @@ function calibrateLineupEfficiency(data: LeagueData): Map<number, number> {
     }
 
     result.set(roster.roster_id, lineupEfficiency)
+  }
+
+  return result
+}
+
+function calibrateRebuilderContenderEfficiency(
+  data: LeagueData,
+  baseFptsByRoster: Map<number, number>,
+): Map<number, number> {
+  const result = new Map<number, number>()
+  const count = data.rosters.length
+  if (count === 0) return result
+
+  const ranked = [...data.rosters].sort((a, b) => {
+    const aWins = (a.settings.wins ?? 0) + (a.settings.ties ?? 0) * 0.5
+    const bWins = (b.settings.wins ?? 0) + (b.settings.ties ?? 0) * 0.5
+    const aPts = baseFptsByRoster.get(a.roster_id) ?? 0
+    const bPts = baseFptsByRoster.get(b.roster_id) ?? 0
+    return bWins - aWins || bPts - aPts
+  })
+
+  const contenderCutoff = Math.floor(count * 0.45)
+  const rebuilderCutoff = Math.ceil(count * 0.55)
+
+  for (let rank = 0; rank < count; rank += 1) {
+    const rosterId = ranked[rank].roster_id
+    if (rank < contenderCutoff) {
+      result.set(rosterId, 1.02)
+    } else if (rank >= rebuilderCutoff) {
+      result.set(rosterId, 0.90)
+    } else {
+      result.set(rosterId, 0.96)
+    }
   }
 
   return result
@@ -1585,6 +1665,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       num(roster.settings.fpts) + num(roster.settings.fpts_decimal) / 100,
     )
   }
+  const rebuilderEfficiencyByRoster = calibrateRebuilderContenderEfficiency(data, baseFptsByRoster)
 
   const stats = new Map(
     data.rosters.map((roster) => [
@@ -1689,7 +1770,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     const n = players.length
     const lineupEfficiency = model.useStrongBayesianForm
       ? (lineupEfficiencyByRoster.get(rosterId) ?? 1)
-      : 1
+      : (model.useRebuilderContenderEfficiency ? (rebuilderEfficiencyByRoster.get(rosterId) ?? 1) : 1)
 
     for (let i = 0; i < n; i += 1) {
       const pw = players[i]
