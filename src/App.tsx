@@ -356,14 +356,14 @@ function App() {
 
             <div className="model-card">
               <div className="model-card-header">
-                <span className="model-card-tag">DEPTH &amp; ATTRITION</span>
-                <h4>6. Realistic In-Game Injuries (Markov Chains)</h4>
+                <span className="model-card-tag">ROSTER DURABILITY</span>
+                <h4>6. Bench Insulation &amp; Depth Stress</h4>
               </div>
               <p>
-                Simulations do not assume players stay healthy through the season. In every projected future week, active players face real-life, position-calibrated injury hazards: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game (plus a +25% fragility factor for players with recent tags).
+                Simulations rigorously test bench durability rather than assuming static depth charts. When starters miss time across simulated weeks (governed by position-calibrated Markov recovery spells: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game, plus empirical recovery curves for existing tags), the rules engine dynamically promotes bench candidates into active lineup and Max PF calculations.
               </p>
               <p>
-                When a player goes down in a simulation run, a multi-week Markov recovery spell is drawn: <strong>48%</strong> miss 1 week, <strong>30%</strong> miss 2–3 weeks, and <strong>22%</strong> suffer severe 4–8+ week absences. Existing Sleeper tags (IR, Out, Doubtful, Questionable) follow calibrated empirical recovery curves. This directly tests each franchise's bench depth—shallow rosters suffer sharp collapses in matchup wins and Max PF, while deep benches insulate rosters and stabilize draft position.
+                This directly separates fragile, top-heavy rosters from insulated contenders: rosters with hollow benches suffer severe floor collapses in both matchup win rate and Max PF when starters go down, while deep benches insulate lineups, maintain scoring baselines, and prevent late-season draft position slides.
               </p>
             </div>
 
