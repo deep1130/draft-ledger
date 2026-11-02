@@ -1,6 +1,6 @@
 # Draft Ledger
 
-A static dynasty fantasy football draft-order projector for Sleeper leagues. The configured league is `1329251955255574528` (Remember The Tight Ends); the league ID field can be changed to another public Sleeper league.
+A static dynasty fantasy football draft-order projector for Sleeper leagues. Enter any public Sleeper league ID in the search field or append `?league=<id>` to the URL to view live draft pick projections and odds.
 
 ## Run locally
 

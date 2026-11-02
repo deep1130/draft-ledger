@@ -4,7 +4,6 @@ import { projectDraftOrder } from './projection'
 import { loadLeagueData, type LeagueData } from './sleeper'
 import './App.css'
 
-const DEMO_LEAGUE_ID = '1329251955255574528'
 type View = 'order' | 'assets'
 const formatNumber = (value: number) => value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
@@ -15,8 +14,6 @@ function getInitialLeagueId(): string {
     if (fromQuery && fromQuery.trim()) return fromQuery.trim()
     const fromHash = window.location.hash.replace(/^#\/?/, '').trim()
     if (fromHash && /^\d+$/.test(fromHash)) return fromHash
-    const saved = localStorage.getItem('last_league_id')
-    if (saved && saved.trim()) return saved.trim()
   }
   return ''
 }
@@ -51,7 +48,6 @@ function App() {
       setData(next)
       setLastUpdated(next.lastUpdated)
       if (typeof window !== 'undefined') {
-        localStorage.setItem('last_league_id', activeId)
         const url = new URL(window.location.href)
         url.searchParams.set('league', activeId)
         window.history.replaceState({}, '', url.toString())
@@ -138,11 +134,7 @@ function App() {
             </button>
           </div>
           <div className="refresh-meta">
-            {data ? (
-              <><Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'FETCHES ON LOAD · NO POLLING'}</>
-            ) : (
-              <><Clock3 size={12} /> Enter a Sleeper League ID or <button type="button" className="demo-link" onClick={() => { setLeagueId(DEMO_LEAGUE_ID); void refresh(DEMO_LEAGUE_ID); }}>load sample league</button></>
-            )}
+            <Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'ENTER A SLEEPER LEAGUE ID AND CLICK REFRESH'}
           </div>
         </div>
       </section>
@@ -170,7 +162,7 @@ function App() {
             <td className="numeric-cell xpick-cell"><span className={`xpick-pill ${inLottery ? 'xpick-lottery' : ''}`}>{team.expectedPick.toFixed(1)}</span></td>
             <td className="numeric-cell">{formatNumber(team.maxPf)}</td><td className="numeric-cell">{formatNumber(team.currentMaxPf)}</td>
           </tr> })}
-          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID above to generate live draft pick projections.</p><button type="button" className="demo-button" onClick={() => { setLeagueId(DEMO_LEAGUE_ID); void refresh(DEMO_LEAGUE_ID); }}>Try sample league</button></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
+          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
         <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF SEED</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · 6 ENGINES · 3,750 SEASONS + ANALYTICAL CDF` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>

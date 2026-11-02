@@ -86,12 +86,8 @@ th:nth-last-child(-n+3) { text-align: right; }
 .xpick-pill.xpick-lottery { color: var(--lottery-text); background: var(--lottery-soft); border-color: var(--lottery-border); }
 .empty-cell { height: 120px; color: var(--muted); text-align: center; }
 .empty-cell svg { vertical-align: middle; margin-right: 8px; }
-.demo-link { display: inline; padding: 0; border: 0; background: none; color: var(--lottery-text); cursor: pointer; text-decoration: underline; font: inherit; }
-.demo-link:hover { color: var(--ink); }
-.empty-league-prompt { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px 0; }
+.empty-league-prompt { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px 0; }
 .empty-league-prompt p { margin: 0; color: var(--muted); font-size: 13px; }
-.demo-button { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 16px; border-radius: 6px; border: 1px solid var(--lottery-border); color: var(--lottery-text); background: var(--lottery-soft); cursor: pointer; font: 500 11px var(--mono); transition: background .15s ease, border-color .15s ease; }
-.demo-button:hover { background: var(--lottery); color: #fff; border-color: var(--lottery); }
 .owned-picks-row td { height: 42px; color: var(--muted); background: var(--surface-subtle); white-space: normal; font-size: 10px; }
 .trade-mark { display: inline-flex; align-items: center; gap: 4px; color: var(--lottery-text); font: 9px var(--mono); }
 
