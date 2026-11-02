@@ -127,7 +127,6 @@ th:nth-last-child(-n+3) { text-align: right; }
 .model-card-header { margin-bottom: 8px; }
 .model-card-tag { display: inline-block; color: var(--lottery-text); font: 500 9px var(--mono); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 3px; }
 .model-card h4 { margin: 0; color: var(--ink); font: 600 13px var(--display); letter-spacing: 0; }
-.model-formula-pill { display: inline-block; margin: 5px 0 8px; padding: 2px 7px; border-radius: 4px; background: #0d0f13; border: 1px solid rgba(255, 255, 255, 0.08); color: #93c5fd; font: 500 10px var(--mono); letter-spacing: 0.02em; }
 .model-card p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .model-card p + p { margin-top: 8px; }
 .model-card code { padding: 1px 5px; border-radius: 3px; background: var(--surface-raised); border: 1px solid var(--line); color: var(--lottery-text); font: 10px var(--mono); }

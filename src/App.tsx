@@ -239,7 +239,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">LEAGUE SCORING</span>
                 <h4>1. Exact League Settings &amp; Live Tracking</h4>
-                <div className="model-formula-pill">∫_T^∞ f(x) dx · Rules Vector</div>
               </div>
               <p>
                 Weekly projections from Sleeper are converted using {data && scoringSummary ? `this league's exact rules (${scoringSummary})` : "this league's exact rules"}.
@@ -255,7 +254,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">ANTI-TANKING</span>
                 <h4>2. Max PF (Why Benching Stars Doesn't Work)</h4>
-                <div className="model-formula-pill">max_{'{'}I ∈ ℐ{'}'} ∑ w(e)</div>
               </div>
               <p>
                 In dynasty leagues, rookie draft order for non-playoff teams is decided by <strong>Max Points For (Max PF)</strong>, not win-loss record.
@@ -269,7 +267,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">SCHEDULE SIMULATION</span>
                 <h4>3. Remaining Matchups &amp; {data ? (hasMedianMatch ? 'Median Games' : 'Standings') : 'Standings'}</h4>
-                <div className="model-formula-pill">W = ∑ I_i · PF Ties</div>
               </div>
               <p>
                 Official Sleeper records through completed weeks are locked in. The current week updates live as real NFL games finish. For all remaining weeks, the engine simulates every scheduled head-to-head matchup{hasMedianMatch ? ' and weekly league median game' : ''} across every simulated season, with simulated starter points breaking any ties in the standings.
@@ -280,7 +277,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">DRAFT ORDER RULES</span>
                 <h4>4. Lottery Picks vs. Playoff Picks</h4>
-                <div className="model-formula-pill">min(Max PF) → Pick 01</div>
               </div>
               {data ? (
                 <p>
@@ -309,7 +305,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">SIMULATION ENGINES</span>
                 <h4>5. The 13 Simulation Realities (6,000 Simulated Seasons + Exact Math)</h4>
-                <div className="model-formula-pill">lim_{'{'}k→∞{'}'} D₁^(k) M D₂^(k) = P* ∈ ℬ_n</div>
               </div>
               <p>
                 To avoid guessing or relying on any single formula, draft odds are simulated across <strong>13 distinct fantasy football scenarios</strong> (12 <a href="https://en.wikipedia.org/wiki/Monte_Carlo_method" target="_blank" rel="noopener noreferrer">Monte Carlo</a> models running 500 full remaining regular seasons each = 6,000 trials, plus an exact mathematical engine):
@@ -377,7 +372,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">ROSTER DURABILITY</span>
                 <h4>6. Bench Depth &amp; Injury Survival</h4>
-                <div className="model-formula-pill">s_{'{'}t+1{'}'} = s_t · P(λ_pos, μ_rec)</div>
               </div>
               <p>
                 Real fantasy seasons are decided by injuries. In our simulations, players face realistic injury odds governed by position-calibrated <a href="https://en.wikipedia.org/wiki/Markov_chain" target="_blank" rel="noopener noreferrer">Markov chains</a>: <strong>Running Backs (~4.6%)</strong>, <strong>Tight Ends (~3.6%)</strong>, <strong>Wide Receivers (~3.3%)</strong>, and <strong>Quarterbacks (~2.2%)</strong> per game, with existing injuries taking realistic time to heal.
@@ -395,7 +389,6 @@ function App() {
                 <div className="model-card-header">
                   <span className="model-card-tag">SEEDING LOGIC</span>
                   <h4>7. The Playoff Bubble (Pick {String(nonPlayoffCount).padStart(2, '0')} vs. Pick {String(nonPlayoffCount + 1).padStart(2, '0')})</h4>
-                  <div className="model-formula-pill">Seed #{playoffTeamsCount} ↔ Pick {String(nonPlayoffCount + 1).padStart(2, '0')}</div>
                 </div>
                 <p>
                   Why do bubble teams often have higher odds for Pick {String(nonPlayoffCount + 1).padStart(2, '0')} than Pick {String(nonPlayoffCount).padStart(2, '0')}?
@@ -413,7 +406,6 @@ function App() {
               <div className="model-card-header">
                 <span className="model-card-tag">DRAFT CAPITAL</span>
                 <h4>{data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? '8. Expected Pick (xPick) & Traded Picks' : '7. Expected Pick (xPick) & Traded Picks'}</h4>
-                <div className="model-formula-pill">E[X] = ∑ j · P(Pick = j)</div>
               </div>
               <p>
                 <strong>Expected Pick (xPick):</strong> Think of xPick as a team's single "average draft slot"—the discrete <a href="https://en.wikipedia.org/wiki/Expected_value" target="_blank" rel="noopener noreferrer">Expected Value</a> of their draft position. For example, an xPick of <code>1.4</code> means a team is almost guaranteed the 1st or 2nd pick. An xPick of <code>6.8</code> means they are hovering right on the playoff bubble between Pick {String(nonPlayoffCount).padStart(2, '0')} and Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.
