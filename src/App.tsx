@@ -14,6 +14,8 @@ function getInitialLeagueId(): string {
     if (fromQuery && fromQuery.trim()) return fromQuery.trim()
     const fromHash = window.location.hash.replace(/^#\/?/, '').trim()
     if (fromHash && /^\d+$/.test(fromHash)) return fromHash
+    const saved = localStorage.getItem('last_league_id')
+    if (saved && saved.trim()) return saved.trim()
   }
   return ''
 }
@@ -48,6 +50,7 @@ function App() {
       setData(next)
       setLastUpdated(next.lastUpdated)
       if (typeof window !== 'undefined') {
+        localStorage.setItem('last_league_id', activeId)
         const url = new URL(window.location.href)
         url.searchParams.set('league', activeId)
         window.history.replaceState({}, '', url.toString())
