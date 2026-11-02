@@ -32,6 +32,9 @@ All models share two calibration layers: player means blend Sleeper's projection
 
 In each simulated week, Starter PF sums pre-kickoff starters while Max PF solves the exact ex-post optimal lineup (via transversal-matroid bipartite matching) across all active, bench, and taxi players—capturing the real Jensen's-inequality bench lift that separates deep benches from stripped-down rebuilders. Head-to-head matchups and Sleeper's extra weekly **league-median** matchup determine playoff qualification, with simulated season Starter PF breaking record ties. Non-playoff teams are ordered strictly by final regular-season Max PF, lowest first, for picks 1–6; playoff qualifiers are ordered by reverse regular-season seed for picks 7–12 (the last playoff seed receives pick 07, up to the #1 seed receiving pick 12). Displayed slots `01..N` are assigned 1-to-1 via lottery likelihood and expected draft pick so duplicate or missing pick slots cannot occur.
 
+### Raw data & Pick 07 vs Pick 06
+Odds chips are sorted strictly by actual simulated frequency (highest probability first) without artificial reordering. Hovering any chip reveals the exact simulation count (e.g. 3 of 2,500 simulations = 0.12%) and range across models. For a team with low Max PF (like Chimichanga), Pick 07 can have slightly higher odds than Pick 06 because Pick 07 only requires a hot streak (10+ wins) to catch the 6th playoff seed, whereas Pick 06 requires outscoring all 5 other lottery teams in season Max PF while somehow still losing enough games to miss the playoffs. Because high scoring naturally produces matchup wins, point surges push teams into the playoffs (Pick 07) far more often than stranding them at Pick 06.
+
 These are estimates, not official league draft positions. Sleeper league settings and scoring data are the source of truth; public APIs may change or be temporarily unavailable.
 
 ## GitHub Pages
