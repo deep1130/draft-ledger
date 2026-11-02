@@ -136,7 +136,7 @@ th:nth-last-child(-n+3) { text-align: right; }
 .model-engine-item { font-size: 11px; line-height: 1.5; color: var(--muted); }
 .model-engine-item strong { color: var(--ink); font-family: var(--mono); font-size: 10px; display: block; margin-bottom: 2px; }
 
-/* College-level Math Deep Dive */
+/* Mathematical Foundations Deep Dive */
 .math-deep-dive {
   margin-top: 18px;
   border-radius: 8px;

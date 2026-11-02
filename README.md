@@ -50,7 +50,7 @@ Draft Ledger integrates **thirteen independent analytical engines** into a conse
 - **The Playoff Bubble (Pick 06 vs. Pick 07):** A bubble team that mounts a late-season scoring surge usually wins enough matchups (and weekly median games) to cross the playoff threshold, locking them into Pick 07. Landing Pick 06 requires leading all non-playoff teams in Max PF while still missing the postseason entirely—a narrow statistical corridor.
 - **Expected Pick (`xPick`):** The probability-weighted average draft position ([Expected Value](https://en.wikipedia.org/wiki/Expected_value): $\mathbb{E}[\text{Pick}] = \sum [j \cdot P(\text{Pick} = j)]$). An xPick of `1.4` indicates a near-certain top-2 pick, while `6.8` indicates a team hovering right on the playoff bubble.
 
-### College-Level Mathematical Foundations & Algorithm Specifications
+### Mathematical Foundations & Algorithm Specifications
 
 For engineers, mathematicians, and fantasy players interested in the formal calculus, probability theory, and discrete optimization algorithms running behind the scenes, the core computational pipeline implements the following specifications (implemented in `src/projection.ts`):
 
