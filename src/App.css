@@ -123,8 +123,18 @@ th:nth-last-child(-n+3) { text-align: right; }
 .model-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .model-grid section { padding-left: 12px; border-left: 1px solid var(--line); }
 .model-grid h3 { margin: 0 0 5px; color: var(--ink); font: 600 10px var(--mono); text-transform: uppercase; }
-.model-grid p, .model-caveat { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.model-caveat { margin-top: 13px; }
+.model-grid p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+.model-blocks { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+.model-block { padding: 14px 16px; border-radius: 6px; background: var(--surface-subtle); border: 1px solid var(--line); }
+.model-block h4 { margin: 0 0 6px; color: var(--ink); font: 600 11px var(--mono); letter-spacing: 0.02em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+.model-block h4 span { color: var(--lottery-text); }
+.model-block p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.model-block p + p { margin-top: 8px; }
+.model-block code { padding: 1px 4px; border-radius: 3px; background: var(--surface-raised); border: 1px solid var(--line); color: var(--lottery-text); font: 10px var(--mono); }
+.model-engine-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin-top: 10px; padding: 10px 12px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-subtle); }
+.model-engine-item { font-size: 11px; line-height: 1.5; color: var(--muted); }
+.model-engine-item strong { color: var(--ink); font-family: var(--mono); font-size: 10px; display: block; margin-bottom: 2px; }
 
 @media (max-width: 1050px) {
   .app-shell { padding-inline: 20px; }
@@ -209,7 +219,11 @@ th:nth-last-child(-n+3) { text-align: right; }
   .model-content { padding-left: 0; }
   .model-grid { grid-template-columns: 1fr 1fr; gap: 14px 10px; }
   .model-grid section { padding-left: 9px; }
-  .model-grid p, .model-caveat { font-size: 10px; }
+  .model-grid p { font-size: 10px; }
+  .model-engine-list { grid-template-columns: 1fr; gap: 10px; }
+  .model-block { padding: 12px 13px; }
+  .model-block p { font-size: 10px; }
+  .model-engine-item { font-size: 10px; }
 }
 
 @media (max-width: 480px) {

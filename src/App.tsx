@@ -233,57 +233,117 @@ function App() {
         <div className="model-content">
           <div className="model-grid">
             <section>
-              <h3>Player &amp; milestone scoring</h3>
+              <h3>1. Scoring &amp; Milestones</h3>
               <p>
                 Weekly projected stat lines from Sleeper are scored with {data && scoringSummary ? `this league's exact rules (${scoringSummary})` : "this league's exact rules"}.
                 {hasMilestoneBonuses
-                  ? ' 100/200-yard rushing/receiving, 300/400-yard passing, and milestone bonuses are simulated via tail probabilities.'
-                  : ' Milestone bonuses (e.g. 100yd rush/rec) are active only if configured in Sleeper.'}{' '}
+                  ? ' 100/200-yard rushing/receiving, 300/400-yard passing, and milestone bonuses are active and modeled via tail probabilities.'
+                  : ' Standard yardage and touchdown multipliers apply without milestone bonuses.'}{' '}
                 Completed games lock in actual points, live games add stochastic remaining-game output, and unstarted games simulate full single-game outcomes.
               </p>
             </section>
             <section>
-              <h3>Bench-aware Max PF (Matroid)</h3>
+              <h3>2. Anti-Tanking Max PF</h3>
               <p>
-                Instead of assuming future Max PF equals a pre-game starter projection, every active, bench, and taxi player is simulated each week with position-calibrated right-skewed variance and NFL team stack shocks. Starter PF uses pre-kickoff starters, while weekly Max PF solves the exact ex-post optimal legal starting lineup (via transversal-matroid bipartite matching)—capturing true bench boom upside. Bye players score zero. Current injury tags draw realistic multi-week Markov spells, and healthy players can suffer new injuries that persist across future weeks.
+                Dynasty rookie order uses Reverse Max PF to eliminate active tanking. Benching studs does NOT lower Max PF: the engine evaluates every active, bench, and taxi player every week using transversal-matroid bipartite matching to solve the highest possible legal starting lineup in hindsight.
               </p>
             </section>
             <section>
-              <h3>Standings &amp; {data ? (hasMedianMatch ? 'median (2 games/wk)' : 'H2H matchups (1 game/wk)') : 'matchups'}</h3>
+              <h3>3. Standings &amp; {data ? (hasMedianMatch ? 'Median (2 Games/Wk)' : 'H2H (1 Game/Wk)') : 'Matchups'}</h3>
               <p>
-                Official Sleeper records through the last finalized week are displayed in the table. The current in-progress week is actively simulated: completed NFL games lock in their real points, live games add stochastic remaining output, and current-week H2H matchups{hasMedianMatch ? ' and median games' : ''} are decided directly inside each simulation run before projecting future weeks. Standings are ranked by win percentage, with simulated season Starter Points For breaking ties.
+                Official Sleeper records through finalized weeks are displayed in the table. The current week is actively simulated live: real points lock in as games finish, while upcoming H2H matchups{hasMedianMatch ? ' and weekly median games' : ''} are resolved dynamically inside every simulation run, with simulated Starter Points For breaking ties.
               </p>
             </section>
             <section>
-              <h3>Dual-tier pick mapping</h3>
+              <h3>4. Dual-Tier Pick Mapping</h3>
               {data ? (
                 <p>
-                  Draft picks are locked based on regular-season finish (playoff tournament games do not alter rookie pick order).
-                  {nonPlayoffCount > 0 ? ` Non-playoff teams (seeds ${nonPlayoffCount + 1}–${totalTeams}) are ordered strictly by final regular-season Max PF, lowest first, for picks 01–${String(nonPlayoffCount).padStart(2, '0')}.` : ''}
-                  {playoffTeamsCount > 0 ? ` Playoff qualifiers (seeds 1–${playoffTeamsCount}) are ordered strictly by reverse regular-season seed for picks ${String(nonPlayoffCount + 1).padStart(2, '0')}–${String(totalTeams).padStart(2, '0')}: the #${playoffTeamsCount} seed receives pick ${String(nonPlayoffCount + 1).padStart(2, '0')}, up to the #1 regular-season seed receiving pick ${String(totalTeams).padStart(2, '0')}.` : ''}
+                  Draft order is locked at regular season's end (playoff bracket games do not alter rookie picks).
+                  {nonPlayoffCount > 0 ? ` Non-playoff teams (seeds ${nonPlayoffCount + 1}–${totalTeams}) receive lottery picks 01–${String(nonPlayoffCount).padStart(2, '0')} ordered strictly by lowest regular-season Max PF.` : ''}
+                  {playoffTeamsCount > 0 ? ` Playoff qualifiers (seeds 1–${playoffTeamsCount}) receive picks ${String(nonPlayoffCount + 1).padStart(2, '0')}–${String(totalTeams).padStart(2, '0')} ordered strictly by reverse regular-season finish (seed #${playoffTeamsCount} receives pick ${String(nonPlayoffCount + 1).padStart(2, '0')}, up to the #1 regular-season seed receiving pick ${String(totalTeams).padStart(2, '0')}).` : ''}
                 </p>
               ) : (
                 <p>
-                  Draft picks are locked based on regular-season finish (playoff tournament games do not alter rookie pick order). Non-playoff teams are ordered strictly by final regular-season Max PF, lowest first, for lottery picks. Playoff qualifiers are ordered strictly by reverse regular-season finish for post-lottery picks.
+                  Draft order is locked at regular season's end. Non-playoff teams receive lottery picks ordered strictly by lowest regular-season Max PF. Playoff qualifiers receive post-lottery picks ordered strictly by reverse regular-season finish.
                 </p>
               )}
             </section>
           </div>
-          {data && nonPlayoffCount > 0 && playoffTeamsCount > 0 && (
-            <p className="model-caveat">
-              <strong>Lottery vs. Playoff Seeding Mechanics:</strong> Pick {String(nonPlayoffCount + 1).padStart(2, '0')} is awarded to the #{playoffTeamsCount} playoff seed.
-              {hasMedianMatch ? (
-                <> In leagues with weekly median matchups ({remainingGames} games decided over the final {remainingWeeks} regular season weeks), a trailing roster that mounts a substantial winning run can secure the final playoff berth, resulting in Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.</>
-              ) : (
-                <> With {remainingWeeks} regular season weeks remaining, a trailing roster that mounts a substantial winning run can secure the final playoff berth, resulting in Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.</>
-              )} Conversely, Pick {String(nonPlayoffCount).padStart(2, '0')} requires missing the postseason entirely while accumulating a higher season Max PF than all {nonPlayoffCount > 1 ? `${nonPlayoffCount - 1} other` : ''} non-playoff rosters. For a roster with a low current Max PF baseline, that outcome requires an uncommon divergence where bench production surges for Max PF while starting lineups fail to win matchups{hasMedianMatch ? ' or surpass weekly medians' : ''}. Because offensive surges naturally correlate with game victories, high-scoring outcomes predominantly transition rosters into the postseason tier (Pick {String(nonPlayoffCount + 1).padStart(2, '0')}) rather than the upper boundary of the lottery tier (Pick {String(nonPlayoffCount).padStart(2, '0')}).
-            </p>
-          )}
-          <p className="model-caveat">
-            <strong>Realistic Injury &amp; Roster Depth Dynamics (Markov Chains):</strong> Simulations do not assume players stay perfectly healthy. In every projected future week, active players face real-life position-calibrated injury hazards (RB: ~4.6%, TE: ~3.6%, WR: ~3.3%, QB: ~2.2% per game, plus a +25% fragility factor for players with recent tags). When a player is injured in a simulation run, a multi-week Markov recovery spell is drawn (48% miss 1 week, 30% miss 2–3 weeks, 22% suffer severe 4–8+ week absences). Existing Sleeper tags (IR, Out, Doubtful, Questionable) follow empirical recovery distributions. This directly stress-tests each franchise's bench depth—shallow rosters suffer sharp collapses in matchup wins and Max PF, while deep benches insulate rosters and stabilize draft position.
-          </p>
-          <p className="model-caveat"><strong>Expected Pick (xPick):</strong> The probability-weighted average draft slot across all 6 projection engines (&Sigma; [probability &times; slot]). While the main table ranks teams by their projected draft order, xPick provides a continuous mathematical expectation of draft position at a glance.</p>
-          <p className="model-caveat"><strong>Simulation Methodology &amp; Multi-Engine Ensemble:</strong> Pick odds chips reflect the consensus average across six independent analytical engines: five Monte Carlo simulation engines (3,750 full seasons total, 750 per engine: player-level compound Gamma, heavy-tail log-normal with in-game risk, empirical historical bootstrap, empirical-Bayes form and starter efficiency calibration, and multi-week Markov injury attrition) plus a deterministic Analytical Gaussian Convolution Engine (using closed-form bivariate normal integration and Poisson-Binomial characteristic convolution to calculate exact win distributions). Model sensitivity ranges displayed under each chip report the min-to-max spread across all six engines.</p>
+
+          <div className="model-blocks">
+            <div className="model-block">
+              <h4><span>//</span> The 6-Engine Ensemble (3,750 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
+              <p>
+                To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>six distinct analytical engines</strong> (750 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
+              </p>
+              <div className="model-engine-list">
+                <div className="model-engine-item">
+                  <strong>1. Player-Level Compound Gamma:</strong>
+                  Positional dispersion modeling with NFL team-level offensive correlation shocks across remaining matchups.
+                </div>
+                <div className="model-engine-item">
+                  <strong>2. Heavy-Tail Boom / Bust:</strong>
+                  Lognormal variance modeling blowout ceiling eruptions and negative game-script floor collapse.
+                </div>
+                <div className="model-engine-item">
+                  <strong>3. Historical League Bootstrap:</strong>
+                  Empirically resamples real achieved player point distributions from the active NFL season.
+                </div>
+                <div className="model-engine-item">
+                  <strong>4. Bayesian Form &amp; Lineup Efficiency:</strong>
+                  Weights recent multi-week team momentum and actual starter-selection efficiency vs optimal Max PF.
+                </div>
+                <div className="model-engine-item">
+                  <strong>5. Injury Attrition &amp; Depth Stress:</strong>
+                  Applies a 1.45&times; elevated injury hazard to stress-test bench depth and roster durability through the winter.
+                </div>
+                <div className="model-engine-item">
+                  <strong>6. Analytical Gaussian CDF:</strong>
+                  Closed-form bivariate normal integration with Poisson-Binomial characteristic convolution for exact, zero-noise win distributions.
+                </div>
+              </div>
+              <p style={{ marginTop: '10px' }}>
+                <strong>Consensus &amp; Sensitivity Spread:</strong> The large percentage on each pick chip is the consensus average across all 6 engines (balanced via Sinkhorn-Knopp doubly-stochastic normalization so every column and row sums to exactly 100.0%). The small range underneath (e.g. <code>75%–87%</code>) shows model sensitivity—the lowest and highest probability found across the 6 different engine perspectives.
+              </p>
+            </div>
+
+            <div className="model-block">
+              <h4><span>//</span> Realistic In-Game Injuries &amp; Multi-Week Recovery (Markov Chains)</h4>
+              <p>
+                Simulations do not assume players stay healthy through the winter. In every projected future week, active players face real-life, position-calibrated injury hazards: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game (plus a +25% fragility factor for players with recent tags).
+              </p>
+              <p>
+                When a player goes down in a simulation run, a multi-week Markov recovery spell is drawn: <strong>48%</strong> miss 1 week, <strong>30%</strong> miss 2–3 weeks, and <strong>22%</strong> suffer severe 4–8+ week absences. Existing Sleeper tags (IR, Out, Doubtful, Questionable) follow calibrated empirical recovery curves. This directly tests each franchise's bench depth—shallow rosters suffer sharp collapses in matchup wins and Max PF, while deep benches insulate rosters and stabilize draft position.
+              </p>
+            </div>
+
+            {data && nonPlayoffCount > 0 && playoffTeamsCount > 0 && (
+              <div className="model-block">
+                <h4><span>//</span> Lottery vs. Playoff Bubble Mechanics (Pick {String(nonPlayoffCount).padStart(2, '0')} vs. Pick {String(nonPlayoffCount + 1).padStart(2, '0')})</h4>
+                <p>
+                  Pick {String(nonPlayoffCount + 1).padStart(2, '0')} is awarded to the #{playoffTeamsCount} playoff seed.
+                  {hasMedianMatch ? (
+                    <> In leagues with weekly median matchups ({remainingGames} games decided over the final {remainingWeeks} regular season weeks), a trailing roster that mounts a substantial winning run can secure the final playoff berth, resulting in Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.</>
+                  ) : (
+                    <> With {remainingWeeks} regular season weeks remaining, a trailing roster that mounts a substantial winning run can secure the final playoff berth, resulting in Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.</>
+                  )} Conversely, Pick {String(nonPlayoffCount).padStart(2, '0')} requires missing the postseason entirely while accumulating a higher season Max PF than all {nonPlayoffCount > 1 ? `${nonPlayoffCount - 1} other` : ''} non-playoff rosters.
+                </p>
+                <p>
+                  Because offensive scoring surges naturally correlate with game victories, high-scoring surges predominantly transition rosters into the postseason tier (Pick {String(nonPlayoffCount + 1).padStart(2, '0')}) rather than the upper boundary of the lottery tier (Pick {String(nonPlayoffCount).padStart(2, '0')}).
+                </p>
+              </div>
+            )}
+
+            <div className="model-block">
+              <h4><span>//</span> Expected Pick (xPick) &amp; Traded Pick Tracking</h4>
+              <p>
+                <strong>Expected Pick (xPick):</strong> The probability-weighted mathematical expectation of draft position (&Sigma; [Pick Number &times; Probability]). While the board ranks franchises by their projected rookie order, xPick provides a continuous numerical measure (e.g. <code>1.4</code> vs <code>2.8</code>) of expected draft capital at a glance.
+              </p>
+              <p>
+                <strong>Traded Pick Ownership:</strong> Traded draft pick records are pulled live from Sleeper. If a team trades away their first-round rookie pick, that pick's order is determined by the original owner's finish, but ownership and lottery rights are tracked and awarded to the acquiring franchise.
+              </p>
+            </div>
+          </div>
         </div>
       </details>
       <div className="bottom-note">UNOFFICIAL DYNASTY TOOL <span>·</span> LIVE SCORES AND PLAYER PROJECTIONS BY SLEEPER</div>
