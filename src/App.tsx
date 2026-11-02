@@ -4,7 +4,7 @@ import { projectDraftOrder } from './projection'
 import { loadLeagueData, type LeagueData } from './sleeper'
 import './App.css'
 
-const DEFAULT_LEAGUE_ID = '1329251955255574528'
+const DEMO_LEAGUE_ID = '1329251955255574528'
 type View = 'order' | 'assets'
 const formatNumber = (value: number) => value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
@@ -18,7 +18,7 @@ function getInitialLeagueId(): string {
     const saved = localStorage.getItem('last_league_id')
     if (saved && saved.trim()) return saved.trim()
   }
-  return DEFAULT_LEAGUE_ID
+  return ''
 }
 
 function teamName(data: LeagueData, roster: LeagueData['rosters'][number]): string {
@@ -27,9 +27,10 @@ function teamName(data: LeagueData, roster: LeagueData['rosters'][number]): stri
 }
 
 function App() {
-  const [leagueId, setLeagueId] = useState(getInitialLeagueId)
+  const initialId = useMemo(getInitialLeagueId, [])
+  const [leagueId, setLeagueId] = useState(initialId)
   const [data, setData] = useState<LeagueData | null>(null)
-  const [busy, setBusy] = useState(true)
+  const [busy, setBusy] = useState(Boolean(initialId))
   const [error, setError] = useState('')
   const [view, setView] = useState<View>('order')
   const [search, setSearch] = useState('')
@@ -38,7 +39,11 @@ function App() {
 
   async function refresh(targetId?: string) {
     const activeId = (targetId ?? leagueId).trim()
-    if (!activeId) return
+    if (!activeId) {
+      setError('Please enter a Sleeper League ID.')
+      setBusy(false)
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -60,7 +65,8 @@ function App() {
 
   async function copyShareUrl() {
     if (typeof window === 'undefined') return
-    const activeId = leagueId.trim() || DEFAULT_LEAGUE_ID
+    const activeId = leagueId.trim()
+    if (!activeId) return
     const url = new URL(window.location.href)
     url.searchParams.set('league', activeId)
     const shareUrl = url.toString()
@@ -69,13 +75,17 @@ function App() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Fallback prompt if clipboard API is restricted
       window.prompt('Copy shareable league URL:', shareUrl)
     }
   }
 
   useEffect(() => {
-    void refresh(getInitialLeagueId())
+    const id = getInitialLeagueId()
+    if (id) {
+      void refresh(id)
+    } else {
+      setBusy(false)
+    }
   }, [])
 
   const picks = useMemo(() => (data ? projectDraftOrder(data) : []), [data])
@@ -128,7 +138,11 @@ function App() {
             </button>
           </div>
           <div className="refresh-meta">
-            <Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'FETCHES ON LOAD · NO POLLING'}
+            {data ? (
+              <><Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'FETCHES ON LOAD · NO POLLING'}</>
+            ) : (
+              <><Clock3 size={12} /> Enter a Sleeper League ID or <button type="button" className="demo-link" onClick={() => { setLeagueId(DEMO_LEAGUE_ID); void refresh(DEMO_LEAGUE_ID); }}>load sample league</button></>
+            )}
           </div>
         </div>
       </section>
@@ -136,10 +150,10 @@ function App() {
       {error && <div className="error-banner"><CircleAlert size={16} /><span>Live data unavailable: {error}</span><button type="button" onClick={() => void refresh()}>Retry</button></div>}
 
       <section className="summary-strip" aria-label="League summary">
-        <div className="summary-item"><span className="summary-label">LEAGUE</span><strong>{data?.league.name ?? (busy ? 'Connecting…' : 'Sleeper league')}</strong><span className="summary-note">{data ? `${data.rosters.length} franchises · ${data.league.scoring_settings.rec ?? 1} PPR` : 'Public league data'}</span></div>
-        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ 18</span></strong><span className="summary-note">Current week + remaining projections</span></div>
+        <div className="summary-item"><span className="summary-label">LEAGUE</span><strong>{data?.league.name ?? (busy ? 'Connecting…' : 'No league connected')}</strong><span className="summary-note">{data ? `${data.rosters.length} franchises · ${data.league.scoring_settings.rec ?? 1} PPR` : 'Enter a league ID above'}</span></div>
+        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ 18</span></strong><span className="summary-note">{data ? 'Current week + remaining projections' : 'Awaiting league ID'}</span></div>
         <div className="summary-item"><span className="summary-label">LOTTERY PICKS</span><strong>{data ? `01 — ${String(nonPlayoffCount).padStart(2, '0')}` : '01 — 06'}</strong><span className="summary-note">Reverse Max Points For</span></div>
-        <div className="summary-item"><span className="summary-label">PICKS IN PLAY</span><strong>{data ? `${tradedCount} TRADED` : '—'}</strong><span className="summary-note">{rookieYear} first-round ownership</span></div>
+        <div className="summary-item"><span className="summary-label">PICKS IN PLAY</span><strong>{data ? `${tradedCount} TRADED` : '—'}</strong><span className="summary-note">{data ? `${rookieYear} first-round ownership` : 'Awaiting league ID'}</span></div>
       </section>
 
       <section className="projection-section">
@@ -147,7 +161,7 @@ function App() {
 
         {view === 'assets' ? <div className="table-wrap"><table><thead><tr><th>ORIGINAL PICK</th><th>CURRENT HOLDER</th><th>ROUND</th><th>SEASON</th><th>STATUS</th></tr></thead><tbody>
           {data?.tradedPicks.filter((pick) => Number(pick.season) === Number(data.league.season) + 1).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
-          {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Connect a league to see pick ownership.'}</td></tr>}
+          {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Enter a Sleeper league ID above to see pick assets.'}</td></tr>}
         </tbody></table></div> : <div className="table-wrap"><table><thead><tr><th className="rank-col">{view === 'order' ? 'PICK' : 'SEED'}</th><th>FRANCHISE</th>{view === 'order' && <th>{rookieYear} PICK HOLDER</th>}<th>CURRENT RECORD</th><th>{view === 'order' ? 'PICK ODDS' : 'PLAYOFF CHANCE'}</th><th>xPICK</th><th>PROJECTED MAX PF</th><th>CURRENT MAX PF</th></tr></thead><tbody>
           {visiblePicks.map((team) => { const inLottery = team.pick <= nonPlayoffCount; const top = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).filter((outcome) => outcome.chance > 0).sort((a, b) => b.chance - a.chance || a.pick - b.pick).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(team.pick).padStart(2, '0')}</span></td><td><span className="franchise-name">{team.name}</span></td>
@@ -156,7 +170,7 @@ function App() {
             <td className="numeric-cell xpick-cell"><span className={`xpick-pill ${inLottery ? 'xpick-lottery' : ''}`}>{team.expectedPick.toFixed(1)}</span></td>
             <td className="numeric-cell">{formatNumber(team.maxPf)}</td><td className="numeric-cell">{formatNumber(team.currentMaxPf)}</td>
           </tr> })}
-          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : 'Enter a public Sleeper league ID and refresh.'}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
+          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID above to generate live draft pick projections.</p><button type="button" className="demo-button" onClick={() => { setLeagueId(DEMO_LEAGUE_ID); void refresh(DEMO_LEAGUE_ID); }}>Try sample league</button></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
         <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF SEED</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · 6 ENGINES · 3,750 SEASONS + ANALYTICAL CDF` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
