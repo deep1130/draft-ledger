@@ -227,13 +227,19 @@ function App() {
       <details className="model-details" open>
         <summary>
           <span className="method-icon"><Trophy size={18} /></span>
-          <span className="model-heading"><strong>How projected picks are calculated</strong><small>Sleeper projections · 5 Monte Carlo engines + Analytical Gaussian CDF</small></span>
+          <div className="model-heading">
+            <span className="model-tag">INTELLIGENCE ARCHITECTURE</span>
+            <strong>How projected picks are calculated</strong>
+          </div>
           <ChevronDown className="model-chevron" size={17} />
         </summary>
         <div className="model-content">
-          <div className="model-grid">
-            <section>
-              <h3>1. Scoring &amp; Milestones</h3>
+          <div className="model-cards-grid">
+            <div className="model-card">
+              <div className="model-card-header">
+                <span className="model-card-tag">RULES ENGINE</span>
+                <h4>1. Scoring &amp; Milestones</h4>
+              </div>
               <p>
                 Weekly projected stat lines from Sleeper are scored with {data && scoringSummary ? `this league's exact rules (${scoringSummary})` : "this league's exact rules"}.
                 {hasMilestoneBonuses
@@ -241,21 +247,33 @@ function App() {
                   : ' Standard yardage and touchdown multipliers apply without milestone bonuses.'}{' '}
                 Completed games lock in actual points, live games add stochastic remaining-game output, and unstarted games simulate full single-game outcomes.
               </p>
-            </section>
-            <section>
-              <h3>2. Anti-Tanking Max PF</h3>
+            </div>
+
+            <div className="model-card">
+              <div className="model-card-header">
+                <span className="model-card-tag">ROSTER INTEGRITY</span>
+                <h4>2. Anti-Tanking Max PF</h4>
+              </div>
               <p>
                 Dynasty rookie order uses Reverse Max PF to eliminate active tanking. Benching studs does NOT lower Max PF: the engine evaluates every active, bench, and taxi player every week using transversal-matroid bipartite matching to solve the highest possible legal starting lineup in hindsight.
               </p>
-            </section>
-            <section>
-              <h3>3. Standings &amp; {data ? (hasMedianMatch ? 'Median (2 Games/Wk)' : 'H2H (1 Game/Wk)') : 'Matchups'}</h3>
+            </div>
+
+            <div className="model-card">
+              <div className="model-card-header">
+                <span className="model-card-tag">SCHEDULE SIMULATION</span>
+                <h4>3. Standings &amp; {data ? (hasMedianMatch ? 'Median (2 Games/Wk)' : 'H2H (1 Game/Wk)') : 'Matchups'}</h4>
+              </div>
               <p>
                 Official Sleeper records through finalized weeks are displayed in the table. The current week is actively simulated live: real points lock in as games finish, while upcoming H2H matchups{hasMedianMatch ? ' and weekly median games' : ''} are resolved dynamically inside every simulation run, with simulated Starter Points For breaking ties.
               </p>
-            </section>
-            <section>
-              <h3>4. Dual-Tier Pick Mapping</h3>
+            </div>
+
+            <div className="model-card">
+              <div className="model-card-header">
+                <span className="model-card-tag">DRAFT CAPITAL</span>
+                <h4>4. Dual-Tier Pick Mapping</h4>
+              </div>
               {data ? (
                 <p>
                   Draft order is locked at regular season's end (playoff bracket games do not alter rookie picks).
@@ -267,12 +285,13 @@ function App() {
                   Draft order is locked at regular season's end. Non-playoff teams receive lottery picks ordered strictly by lowest regular-season Max PF. Playoff qualifiers receive post-lottery picks ordered strictly by reverse regular-season finish.
                 </p>
               )}
-            </section>
-          </div>
+            </div>
 
-          <div className="model-blocks">
-            <div className="model-block">
-              <h4><span>//</span> The 6-Engine Ensemble (3,750 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
+            <div className="model-card full-width">
+              <div className="model-card-header">
+                <span className="model-card-tag">MULTI-MODEL METHODOLOGY</span>
+                <h4>5. The 6-Engine Ensemble (3,750 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
+              </div>
               <p>
                 To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>six distinct analytical engines</strong> (750 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
               </p>
@@ -307,8 +326,11 @@ function App() {
               </p>
             </div>
 
-            <div className="model-block">
-              <h4><span>//</span> Realistic In-Game Injuries &amp; Multi-Week Recovery (Markov Chains)</h4>
+            <div className="model-card">
+              <div className="model-card-header">
+                <span className="model-card-tag">DEPTH &amp; ATTRITION</span>
+                <h4>6. Realistic In-Game Injuries (Markov Chains)</h4>
+              </div>
               <p>
                 Simulations do not assume players stay healthy through the winter. In every projected future week, active players face real-life, position-calibrated injury hazards: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game (plus a +25% fragility factor for players with recent tags).
               </p>
@@ -317,9 +339,12 @@ function App() {
               </p>
             </div>
 
-            {data && nonPlayoffCount > 0 && playoffTeamsCount > 0 && (
-              <div className="model-block">
-                <h4><span>//</span> Lottery vs. Playoff Bubble Mechanics (Pick {String(nonPlayoffCount).padStart(2, '0')} vs. Pick {String(nonPlayoffCount + 1).padStart(2, '0')})</h4>
+            {data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? (
+              <div className="model-card">
+                <div className="model-card-header">
+                  <span className="model-card-tag">SEEDING LOGIC</span>
+                  <h4>7. Bubble Mechanics (Pick {String(nonPlayoffCount).padStart(2, '0')} vs. Pick {String(nonPlayoffCount + 1).padStart(2, '0')})</h4>
+                </div>
                 <p>
                   Pick {String(nonPlayoffCount + 1).padStart(2, '0')} is awarded to the #{playoffTeamsCount} playoff seed.
                   {hasMedianMatch ? (
@@ -332,10 +357,13 @@ function App() {
                   Because offensive scoring surges naturally correlate with game victories, high-scoring surges predominantly transition rosters into the postseason tier (Pick {String(nonPlayoffCount + 1).padStart(2, '0')}) rather than the upper boundary of the lottery tier (Pick {String(nonPlayoffCount).padStart(2, '0')}).
                 </p>
               </div>
-            )}
+            ) : null}
 
-            <div className="model-block">
-              <h4><span>//</span> Expected Pick (xPick) &amp; Traded Pick Tracking</h4>
+            <div className={`model-card ${(!data || nonPlayoffCount === 0 || playoffTeamsCount === 0) ? 'full-width' : ''}`}>
+              <div className="model-card-header">
+                <span className="model-card-tag">CAPITAL &amp; OWNERSHIP</span>
+                <h4>{data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? '8. xPick & Traded Picks' : '7. xPick & Traded Picks'}</h4>
+              </div>
               <p>
                 <strong>Expected Pick (xPick):</strong> The probability-weighted mathematical expectation of draft position (&Sigma; [Pick Number &times; Probability]). While the board ranks franchises by their projected rookie order, xPick provides a continuous numerical measure (e.g. <code>1.4</code> vs <code>2.8</code>) of expected draft capital at a glance.
               </p>
