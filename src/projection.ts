@@ -39,6 +39,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -52,6 +53,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -65,6 +67,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -78,6 +81,7 @@ const MODELS = [
     useStrongBayesianForm: true,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -91,6 +95,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -104,6 +109,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -117,6 +123,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -130,6 +137,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: true,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -143,6 +151,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 0.75,
   },
   {
@@ -156,6 +165,7 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: true,
+    useQbDomino: false,
     dispersionScale: 1.0,
   },
   {
@@ -169,7 +179,22 @@ const MODELS = [
     useStrongBayesianForm: false,
     useYouthTrajectory: false,
     useRebuilderContenderEfficiency: false,
+    useQbDomino: false,
     dispersionScale: 1.25,
+  },
+  {
+    key: 'qb-domino',
+    label: 'Starting QB injury domino & cascade',
+    sampler: 'gamma',
+    teamCorrSd: 0.24,
+    rosOffenseSd: 0.12,
+    rosPlayerScale: 1.15,
+    attritionScale: 1.10,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    useRebuilderContenderEfficiency: false,
+    useQbDomino: true,
+    dispersionScale: 1.0,
   },
 ] as const
 
@@ -606,6 +631,9 @@ interface GlobalPlayerProfile {
   ebStandardMult: number
   ebStrongFormMult: number
   youthTrajectoryMult: number
+  primaryPos: string
+  nflTeam: string | undefined
+  calibratedMu: number
 }
 
 function buildGlobalPlayerProfiles(
@@ -786,6 +814,9 @@ function buildGlobalPlayerProfiles(
       ebStandardMult,
       ebStrongFormMult,
       youthTrajectoryMult,
+      primaryPos,
+      nflTeam,
+      calibratedMu,
     })
   }
 
@@ -1695,6 +1726,20 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   const scratchOrder = new Int32Array(bufLen)
   const scratchUsed = new Uint8Array(bufLen)
   const medianScratch = new Float64Array(count)
+  const qbDown = new Uint8Array(numNflTeams)
+  const startingQbByNflTeam = new Int32Array(numNflTeams).fill(-1)
+  const startingQbMuByNflTeam = new Float64Array(numNflTeams)
+
+  for (let g = 0; g < globalProfiles.length; g += 1) {
+    const prof = globalProfiles[g]
+    if (prof.primaryPos === 'QB' && prof.nflTeam) {
+      const tId = getNflTeamId(prof.nflTeam)
+      if (tId >= 0 && prof.calibratedMu > startingQbMuByNflTeam[tId]) {
+        startingQbMuByNflTeam[tId] = prof.calibratedMu
+        startingQbByNflTeam[tId] = g
+      }
+    }
+  }
 
   function rollNflTeamShocks(teamCorrSd: number, rng: RandomSource): void {
     if (teamCorrSd <= 0) {
@@ -1816,10 +1861,14 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       const baseScale = model.useStrongBayesianForm
         ? pw.strongFormScale
         : (model.useYouthTrajectory ? pw.youthScale : pw.stdScale)
+      const qbCascadeMult =
+        model.useQbDomino && pw.nflTeamIndex >= 0 && qbDown[pw.nflTeamIndex] === 1
+          ? ((pw.posMask & 12) !== 0 ? 0.78 : (pw.posMask & 2) !== 0 ? 0.92 : 1)
+          : 1
       const rawRos =
         (gIdx >= 0 ? playerRosMult[gIdx] : 1) *
         (pw.nflTeamIndex >= 0 ? nflTeamRosMult[pw.nflTeamIndex] : 1)
-      const effectiveScale = baseScale * (pw.rosWeight > 0 ? 1 + pw.rosWeight * (rawRos - 1) : 1)
+      const effectiveScale = baseScale * qbCascadeMult * (pw.rosWeight > 0 ? 1 + pw.rosWeight * (rawRos - 1) : 1)
 
       scratchAvailable[i] = 1
       scratchExpected[i] = (pw.remBaseMu + pw.expectedBonus) * effectiveScale
@@ -1943,6 +1992,15 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         if (!weekRosters) continue
 
         rollNflTeamShocks(model.teamCorrSd, rng)
+        if (model.useQbDomino) {
+          qbDown.fill(0)
+          for (let t = 0; t < numNflTeams; t += 1) {
+            const qbIdx = startingQbByNflTeam[t]
+            if (qbIdx >= 0 && playerWeeksOut[qbIdx] > 0) {
+              qbDown[t] = 1
+            }
+          }
+        }
         const weekPoints = new Map<number, number>()
 
         for (let rIdx = 0; rIdx < count; rIdx += 1) {
