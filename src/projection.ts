@@ -25,7 +25,7 @@ export interface ProjectedPick {
   simulationCount: number
 }
 
-const SIMULATIONS_PER_MODEL = 1000
+const SIMULATIONS_PER_MODEL = 750
 
 const MODELS = [
   {
