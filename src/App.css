@@ -60,7 +60,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .holder-cell { color: #35463c; }
 .asset-tag { margin-left: 7px; padding: 3px 5px; color: #557144; background: #e9efd9; font: 8px var(--mono); }
 .record-pill { color: #69766d; font: 11px var(--mono); }
-.odds-cell { display: flex; flex-wrap: wrap; gap: 4px; max-width: 440px; }
+.odds-cell { display: grid; grid-template-columns: repeat(8, minmax(59px, max-content)); gap: 4px; width: max-content; max-width: none; }
 .odds-pill { display: inline-grid; grid-template-columns: auto auto; align-items: center; column-gap: 4px; min-width: 59px; padding: 4px 5px; color: #748077; background: #f0f2ed; font: 9px var(--mono); }
 .odds-pill b { color: #46564a; }
 .odds-pill small { grid-column: 1 / -1; color: #9398a0; text-align: center; font: 7px var(--mono); white-space: nowrap; }
@@ -215,8 +215,8 @@ td { color: #c5c7cc; border-color: #2d3035; }
   .table-wrap tr.lottery-row td:nth-child(4), .table-wrap tr.playoff-row td:nth-child(4) { grid-column: 2 / 4; grid-row: 3; }
   .table-wrap tr.lottery-row td:nth-child(4)::before, .table-wrap tr.playoff-row td:nth-child(4)::before { content: 'CURRENT RECORD'; display: block; margin-bottom: 2px; color: #92969d; font: 8px var(--mono); }
   .table-wrap tr.lottery-row td:nth-child(5), .table-wrap tr.playoff-row td:nth-child(5) { grid-column: 2 / 4; grid-row: 4; }
-  .odds-cell { flex-wrap: wrap; gap: 4px; }
-  .odds-pill { min-width: 55px; }
+  .odds-cell { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; width: 100%; max-width: 100%; }
+  .odds-pill { min-width: 0; justify-content: center; }
   .table-wrap tr.lottery-row td:nth-child(6), .table-wrap tr.playoff-row td:nth-child(6) { grid-column: 2; grid-row: 5; text-align: left; }
   .table-wrap tr.lottery-row td:nth-child(7), .table-wrap tr.playoff-row td:nth-child(7) { grid-column: 3; grid-row: 5; }
   .table-wrap tr.lottery-row td:nth-child(6)::before, .table-wrap tr.playoff-row td:nth-child(6)::before { content: 'MAX PF'; display: block; margin-bottom: 2px; color: #92969d; font: 8px var(--mono); }
