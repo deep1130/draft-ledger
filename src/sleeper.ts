@@ -46,6 +46,8 @@ export interface SleeperPlayer {
   fantasy_positions?: string[] | null
   injury_status?: string | null
   status?: string | null
+  years_exp?: number | null
+  age?: number | null
 }
 
 export interface TradedPick {

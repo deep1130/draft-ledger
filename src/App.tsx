@@ -221,7 +221,7 @@ function App() {
           {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
-        <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF SEED</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · 6 ENGINES · 3,750 SEASONS + ANALYTICAL CDF` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
+        <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF SEED</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · ${picks[0]?.modelNames.length ?? 7} ENGINES · ${(picks[0]?.simulationCount ?? 4500).toLocaleString('en-US')} SEASONS + ANALYTICAL CDF` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
       </section>
 
       <details className="model-details" open>
@@ -290,10 +290,10 @@ function App() {
             <div className="model-card full-width">
               <div className="model-card-header">
                 <span className="model-card-tag">MULTI-MODEL METHODOLOGY</span>
-                <h4>5. The 6-Engine Ensemble (3,750 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
+                <h4>5. The 10-Engine Ensemble (4,500 Monte Carlo Seasons + Analytical Gaussian CDF)</h4>
               </div>
               <p>
-                To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>six distinct analytical engines</strong> (750 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
+                To avoid relying on any single mathematical assumption, pick odds are determined by an ensemble of <strong>ten distinct analytical engines</strong> (500 full remaining regular seasons per Monte Carlo model, plus a closed-form deterministic mathematical engine):
               </p>
               <div className="model-engine-list">
                 <div className="model-engine-item">
@@ -313,16 +313,32 @@ function App() {
                   Weights recent multi-week team momentum and actual starter-selection efficiency vs optimal Max PF.
                 </div>
                 <div className="model-engine-item">
-                  <strong>5. Injury Attrition &amp; Depth Stress:</strong>
-                  Applies a 1.45&times; elevated injury hazard to stress-test bench depth and roster durability through the winter.
+                  <strong>5. Elevated Injury Attrition (1.5&times;):</strong>
+                  Applies a 1.50&times; elevated injury hazard to stress-test bench depth and roster durability through the season.
                 </div>
                 <div className="model-engine-item">
-                  <strong>6. Analytical Gaussian CDF:</strong>
+                  <strong>6. Severe Injury Shock &amp; Crisis (2.0&times;):</strong>
+                  Applies a 2.00&times; elevated injury hazard to simulate severe absence cascades and acute roster fragility where depth failure is magnified.
+                </div>
+                <div className="model-engine-item">
+                  <strong>7. Game-Script Shootout &amp; Stacking:</strong>
+                  Amplifies team-stack correlation to model high-scoring offensive shootouts and game-script volume shifts.
+                </div>
+                <div className="model-engine-item">
+                  <strong>8. Dynasty Youth &amp; Rookie Breakout:</strong>
+                  Models second-half rookie snap expansion and late-season youth role surges vs aging veteran wear-and-tear.
+                </div>
+                <div className="model-engine-item">
+                  <strong>9. Conservative Floor &amp; Tight Median:</strong>
+                  Compresses single-game variance to model chalk, low-volatility baseline expectations.
+                </div>
+                <div className="model-engine-item">
+                  <strong>10. Analytical Gaussian CDF:</strong>
                   Closed-form bivariate normal integration with Poisson-Binomial characteristic convolution for exact, zero-noise win distributions.
                 </div>
               </div>
               <p style={{ marginTop: '10px' }}>
-                <strong>Consensus &amp; Sensitivity Spread:</strong> The large percentage on each pick chip is the consensus average across all 6 engines (balanced via Sinkhorn-Knopp doubly-stochastic normalization so every column and row sums to exactly 100.0%). The small range underneath (e.g. <code>75%–87%</code>) shows model sensitivity—the lowest and highest probability found across the 6 different engine perspectives.
+                <strong>Consensus &amp; Sensitivity Spread:</strong> The large percentage on each pick chip is the consensus average across all 10 engines (balanced via Sinkhorn-Knopp doubly-stochastic normalization so every column and row sums to exactly 100.0%). The small range underneath (e.g. <code>75%–87%</code>) shows model sensitivity—the lowest and highest probability found across the 10 different engine perspectives.
               </p>
             </div>
 
@@ -332,7 +348,7 @@ function App() {
                 <h4>6. Realistic In-Game Injuries (Markov Chains)</h4>
               </div>
               <p>
-                Simulations do not assume players stay healthy through the winter. In every projected future week, active players face real-life, position-calibrated injury hazards: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game (plus a +25% fragility factor for players with recent tags).
+                Simulations do not assume players stay healthy through the season. In every projected future week, active players face real-life, position-calibrated injury hazards: <strong>RB: ~4.6%</strong>, <strong>TE: ~3.6%</strong>, <strong>WR: ~3.3%</strong>, <strong>QB: ~2.2%</strong> per game (plus a +25% fragility factor for players with recent tags).
               </p>
               <p>
                 When a player goes down in a simulation run, a multi-week Markov recovery spell is drawn: <strong>48%</strong> miss 1 week, <strong>30%</strong> miss 2–3 weeks, and <strong>22%</strong> suffer severe 4–8+ week absences. Existing Sleeper tags (IR, Out, Doubtful, Questionable) follow calibrated empirical recovery curves. This directly tests each franchise's bench depth—shallow rosters suffer sharp collapses in matchup wins and Max PF, while deep benches insulate rosters and stabilize draft position.

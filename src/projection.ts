@@ -25,7 +25,7 @@ export interface ProjectedPick {
   simulationCount: number
 }
 
-const SIMULATIONS_PER_MODEL = 750
+const SIMULATIONS_PER_MODEL = 500
 
 const MODELS = [
   {
@@ -37,6 +37,8 @@ const MODELS = [
     rosPlayerScale: 1.0,
     attritionScale: 1.0,
     useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
   },
   {
     key: 'boom-bust',
@@ -47,6 +49,8 @@ const MODELS = [
     rosPlayerScale: 1.15,
     attritionScale: 1.0,
     useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
   },
   {
     key: 'bootstrap',
@@ -57,6 +61,8 @@ const MODELS = [
     rosPlayerScale: 0.90,
     attritionScale: 0.95,
     useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
   },
   {
     key: 'bayesian-form',
@@ -67,16 +73,68 @@ const MODELS = [
     rosPlayerScale: 0.95,
     attritionScale: 1.0,
     useStrongBayesianForm: true,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
   },
   {
-    key: 'attrition',
-    label: 'Injury attrition & bench stress',
+    key: 'attrition-15',
+    label: 'Elevated injury attrition (1.5x)',
     sampler: 'gamma',
     teamCorrSd: 0.20,
     rosOffenseSd: 0.11,
     rosPlayerScale: 1.10,
-    attritionScale: 1.45,
+    attritionScale: 1.5,
     useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
+  },
+  {
+    key: 'attrition-20',
+    label: 'Severe injury shock & crisis (2.0x)',
+    sampler: 'gamma',
+    teamCorrSd: 0.22,
+    rosOffenseSd: 0.12,
+    rosPlayerScale: 1.20,
+    attritionScale: 2.0,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
+  },
+  {
+    key: 'shootout-stacking',
+    label: 'Game-script shootout & stacking',
+    sampler: 'gamma',
+    teamCorrSd: 0.32,
+    rosOffenseSd: 0.16,
+    rosPlayerScale: 1.05,
+    attritionScale: 1.0,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 1.0,
+  },
+  {
+    key: 'youth-breakout',
+    label: 'Dynasty youth & rookie breakout',
+    sampler: 'gamma',
+    teamCorrSd: 0.18,
+    rosOffenseSd: 0.10,
+    rosPlayerScale: 1.25,
+    attritionScale: 1.0,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: true,
+    dispersionScale: 1.0,
+  },
+  {
+    key: 'conservative-floor',
+    label: 'Conservative floor & tight median',
+    sampler: 'gamma',
+    teamCorrSd: 0.10,
+    rosOffenseSd: 0.05,
+    rosPlayerScale: 0.70,
+    attritionScale: 0.75,
+    useStrongBayesianForm: false,
+    useYouthTrajectory: false,
+    dispersionScale: 0.75,
   },
 ] as const
 
@@ -512,6 +570,7 @@ interface GlobalPlayerProfile {
   rosUncertSd: number
   ebStandardMult: number
   ebStrongFormMult: number
+  youthTrajectoryMult: number
 }
 
 function buildGlobalPlayerProfiles(
@@ -668,6 +727,17 @@ function buildGlobalPlayerProfiles(
     const baseHazard = POSITIONAL_INJURY_HAZARD[primaryPos] ?? 0.032
     const fragileMult = injuryTier === 'healthy' ? 1.0 : 1.25
 
+    const exp = typeof player?.years_exp === 'number' && Number.isFinite(player.years_exp) ? player.years_exp : null
+    const age = typeof player?.age === 'number' && Number.isFinite(player.age) ? player.age : null
+    let youthTrajectoryMult = 1.0
+    if (exp === 0 || (exp === null && age !== null && age <= 22)) {
+      youthTrajectoryMult = 1.12
+    } else if (exp === 1 || (exp === null && age !== null && age === 23)) {
+      youthTrajectoryMult = 1.06
+    } else if ((exp !== null && exp >= 7) || (age !== null && age >= 30)) {
+      youthTrajectoryMult = 0.94
+    }
+
     idToGlobalIndex.set(id, profiles.length)
     profiles.push({
       id,
@@ -680,6 +750,7 @@ function buildGlobalPlayerProfiles(
       rosUncertSd,
       ebStandardMult,
       ebStrongFormMult,
+      youthTrajectoryMult,
     })
   }
 
@@ -740,6 +811,7 @@ interface CompiledPlayerWeek {
   theta2: number
   stdScale: number
   strongFormScale: number
+  youthScale: number
   rosWeight: number
   bootstrapPool: Float64Array
   projPassYd: number
@@ -1421,8 +1493,10 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         const profile = globalPlayerIndex >= 0 ? globalProfiles[globalPlayerIndex] : undefined
         const ebStd = profile?.ebStandardMult ?? 1
         const ebStrong = profile?.ebStrongFormMult ?? 1
+        const ebYouth = ebStd * (profile?.youthTrajectoryMult ?? 1)
         const stdScale = state === 3 ? (weeksAhead > 0 ? ebStd : 1 + 0.5 * (ebStd - 1)) : 1
         const strongFormScale = state === 3 ? (weeksAhead > 0 ? ebStrong : 1 + 0.5 * (ebStrong - 1)) : 1
+        const youthScale = state === 3 ? (weeksAhead > 0 ? ebYouth : 1 + 0.5 * (ebYouth - 1)) : 1
         const rosWeight = state === 3 ? (weeksAhead > 0 ? 1 : 0.35) : 0
 
         const theta = positionalTheta[primaryPos] ?? 2.15
@@ -1443,6 +1517,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
           theta2: theta * theta,
           stdScale,
           strongFormScale,
+          youthScale,
           rosWeight,
           bootstrapPool,
           projPassYd: num(projStats?.pass_yd),
@@ -1634,7 +1709,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         scratchAvailable[i] = 1
         const teamMult = pw.nflTeamIndex >= 0 ? nflTeamShocks[pw.nflTeamIndex] : 1
         const inCorrVar = model.teamCorrSd * model.teamCorrSd * pw.remFraction
-        const inIdioFactor = Math.max(0.45, (1 - 0.35 * inCorrVar) / (1 + inCorrVar))
+        const inIdioFactor = Math.max(0.45, (1 - 0.35 * inCorrVar) / (1 + inCorrVar)) * model.dispersionScale
         const remSim = samplePlayerRemainingPoints(
           pw,
           teamMult,
@@ -1657,7 +1732,9 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         continue
       }
 
-      const baseScale = model.useStrongBayesianForm ? pw.strongFormScale : pw.stdScale
+      const baseScale = model.useStrongBayesianForm
+        ? pw.strongFormScale
+        : (model.useYouthTrajectory ? pw.youthScale : pw.stdScale)
       const rawRos =
         (gIdx >= 0 ? playerRosMult[gIdx] : 1) *
         (pw.nflTeamIndex >= 0 ? nflTeamRosMult[pw.nflTeamIndex] : 1)
@@ -1756,7 +1833,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   for (const [modelIndex, model] of MODELS.entries()) {
     const rng = createRandomSource(baseSeed + modelIndex * 7919)
     const corrVar = model.teamCorrSd * model.teamCorrSd
-    const fullIdioVarFactor = Math.max(0.45, (1 - 0.35 * corrVar) / (1 + corrVar))
+    const fullIdioVarFactor = Math.max(0.45, (1 - 0.35 * corrVar) / (1 + corrVar)) * model.dispersionScale
 
     for (let run = 0; run < SIMULATIONS_PER_MODEL; run += 1) {
       initSeasonLatentState(model, rng)
