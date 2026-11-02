@@ -17,10 +17,10 @@
   --muted: #8b929e;
   --line: rgba(255, 255, 255, 0.09);
   --line-subtle: rgba(255, 255, 255, 0.06);
-  --lottery: #2dd4bf;
-  --lottery-text: #5eead4;
-  --lottery-soft: rgba(45, 212, 191, 0.10);
-  --lottery-border: rgba(45, 212, 191, 0.25);
+  --lottery: #60a5fa;
+  --lottery-text: #93c5fd;
+  --lottery-soft: rgba(96, 165, 250, 0.10);
+  --lottery-border: rgba(96, 165, 250, 0.26);
   --playoff: #94a3b8;
   --playoff-text: #e2e8f0;
   --playoff-soft: rgba(255, 255, 255, 0.055);
@@ -45,4 +45,4 @@ button, input { font: inherit; }
 button { color: inherit; }
 a { color: inherit; }
 #root { min-height: 100vh; }
-::selection { color: #0a0b0d; background: #5eead4; }
+::selection { color: #0a0b0d; background: #93c5fd; }
