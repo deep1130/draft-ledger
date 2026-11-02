@@ -981,6 +981,34 @@ function convolvePoissonBinomial(probs: number[]): Float64Array {
   return dist
 }
 
+function makeDoublyStochastic(matrix: number[][], maxIter = 50): number[][] {
+  const n = matrix.length
+  if (n <= 1) return matrix
+  let res = matrix.map((row) => [...row])
+  for (let iter = 0; iter < maxIter; iter += 1) {
+    for (let r = 0; r < n; r += 1) {
+      const sum = res[r].reduce((a, b) => a + b, 0)
+      if (sum > 0) {
+        for (let c = 0; c < n; c += 1) res[r][c] /= sum
+      }
+    }
+    for (let c = 0; c < n; c += 1) {
+      let sum = 0
+      for (let r = 0; r < n; r += 1) sum += res[r][c]
+      if (sum > 0) {
+        for (let r = 0; r < n; r += 1) res[r][c] /= sum
+      }
+    }
+  }
+  for (let r = 0; r < n; r += 1) {
+    const sum = res[r].reduce((a, b) => a + b, 0)
+    if (sum > 0) {
+      for (let c = 0; c < n; c += 1) res[r][c] /= sum
+    }
+  }
+  return res
+}
+
 function computeAnalyticalProbabilities(
   data: LeagueData,
   compiledWeeks: Map<number, Map<number, CompiledRosterWeek>>,
@@ -1214,6 +1242,13 @@ function computeAnalyticalProbabilities(
     }
     result.set(rId, picks)
   }
+
+  const rosterIds = data.rosters.map((r) => r.roster_id)
+  const analyticalMatrix = rosterIds.map((rId) => result.get(rId) ?? new Array(count).fill(0))
+  const doublyStochastic = makeDoublyStochastic(analyticalMatrix)
+  rosterIds.forEach((rId, idx) => {
+    result.set(rId, doublyStochastic[idx])
+  })
 
   return result
 }
@@ -1912,6 +1947,12 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       modelNames: allEngineLabels,
       simulationCount: TOTAL_SIMULATIONS,
     }
+  })
+
+  const rawMatrix = rawTeams.map((team) => team.probabilities)
+  const normalizedMatrix = makeDoublyStochastic(rawMatrix)
+  rawTeams.forEach((team, idx) => {
+    team.probabilities = normalizedMatrix[idx]
   })
 
   return assignBijectiveDraftPicks(rawTeams, nonPlayoffCount)
