@@ -25,7 +25,7 @@ export interface ProjectedPick {
   simulationCount: number
 }
 
-const SIMULATIONS_PER_MODEL = 2000
+const SIMULATIONS_PER_MODEL = 1000
 
 const MODELS = [
   {
@@ -952,6 +952,272 @@ function teamName(data: LeagueData, roster: SleeperRoster): string {
   return user?.metadata?.team_name || user?.display_name || `Team ${roster.roster_id}`
 }
 
+function normalCdf(x: number): number {
+  const a1 =  0.254829592
+  const a2 = -0.284496736
+  const a3 =  1.421413741
+  const a4 = -1.453152027
+  const a5 =  1.061405429
+  const p  =  0.3275911
+
+  const sign = x < 0 ? -1 : 1
+  const absX = Math.abs(x) / Math.SQRT2
+  const t = 1.0 / (1.0 + p * absX)
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX)
+  return 0.5 * (1.0 + sign * y)
+}
+
+function convolvePoissonBinomial(probs: number[]): Float64Array {
+  let dist = new Float64Array([1])
+  for (const p of probs) {
+    const next = new Float64Array(dist.length + 1)
+    const q = 1 - p
+    for (let k = 0; k < dist.length; k += 1) {
+      next[k] += dist[k] * q
+      next[k + 1] += dist[k] * p
+    }
+    dist = next
+  }
+  return dist
+}
+
+function computeAnalyticalProbabilities(
+  data: LeagueData,
+  compiledWeeks: Map<number, Map<number, CompiledRosterWeek>>,
+  weekPairs: Map<number, Array<[number, number]>>,
+  firstSimWeek: number,
+  regularEnd: number,
+  baseFptsByRoster: Map<number, number>,
+  baseMaxPfByRoster: Map<number, number>,
+  slots: readonly string[],
+  count: number,
+  nonPlayoffCount: number,
+  hasLeagueMedianMatch: boolean,
+): Map<number, number[]> {
+  const result = new Map<number, number[]>()
+  for (const r of data.rosters) {
+    result.set(r.roster_id, new Array(count).fill(0))
+  }
+  if (count <= 1) return result
+
+  const baseWins = new Map<number, number>()
+  const totalStarterMu = new Map<number, number>()
+  const totalStarterVar = new Map<number, number>()
+  const totalMaxPfMu = new Map<number, number>()
+  const totalMaxPfVar = new Map<number, number>()
+  const winProbsByRoster = new Map<number, number[]>()
+
+  for (const r of data.rosters) {
+    baseWins.set(r.roster_id, num(r.settings.wins))
+    totalStarterMu.set(r.roster_id, baseFptsByRoster.get(r.roster_id) ?? 0)
+    totalStarterVar.set(r.roster_id, 0)
+    totalMaxPfMu.set(r.roster_id, baseMaxPfByRoster.get(r.roster_id) ?? 0)
+    totalMaxPfVar.set(r.roster_id, 0)
+    winProbsByRoster.set(r.roster_id, [])
+  }
+
+  for (let week = firstSimWeek; week <= regularEnd; week += 1) {
+    const weekRosters = compiledWeeks.get(week)
+    if (!weekRosters) continue
+
+    const weekStarterMu = new Map<number, number>()
+    const weekStarterSd = new Map<number, number>()
+    const weekMaxPfMu = new Map<number, number>()
+    const weekMaxPfSd = new Map<number, number>()
+
+    for (const r of data.rosters) {
+      const rw = weekRosters.get(r.roster_id)
+      if (!rw) {
+        weekStarterMu.set(r.roster_id, 0)
+        weekStarterSd.set(r.roster_id, 10)
+        weekMaxPfMu.set(r.roster_id, 0)
+        weekMaxPfSd.set(r.roster_id, 10)
+        continue
+      }
+
+      let sMu = 0
+      let sVar = 0
+      if (rw.hasActualStarters) {
+        for (let i = 0; i < slots.length; i += 1) {
+          const pIdx = rw.actualStarterSlotPlayers[i]
+          if (pIdx >= 0) {
+            const pw = rw.players[pIdx]
+            sMu += pw.lockedPoints + pw.remBaseMu
+            sVar += pw.remBaseMu * pw.theta2 * 1.05
+          }
+        }
+      } else {
+        const sorted = [...rw.players]
+          .filter((p) => p.state !== 0)
+          .sort((a, b) => (b.lockedPoints + b.remBaseMu) - (a.lockedPoints + a.remBaseMu))
+        const n = Math.min(slots.length, sorted.length)
+        for (let i = 0; i < n; i += 1) {
+          const pw = sorted[i]
+          sMu += pw.lockedPoints + pw.remBaseMu
+          sVar += pw.remBaseMu * pw.theta2 * 1.05
+        }
+      }
+
+      let mMu = 0
+      let mVar = 0
+      const active = rw.players.filter((p) => p.state !== 0)
+      const sortedActive = [...active].sort(
+        (a, b) => (b.lockedPoints + b.remBaseMu) - (a.lockedPoints + a.remBaseMu),
+      )
+      const nMax = Math.min(slots.length, sortedActive.length)
+      for (let i = 0; i < nMax; i += 1) {
+        const pw = sortedActive[i]
+        mMu += pw.lockedPoints + pw.remBaseMu * 1.08
+        mVar += pw.remBaseMu * pw.theta2 * 1.15
+      }
+
+      sVar += (sMu * 0.16) ** 2
+      mVar += (mMu * 0.14) ** 2
+
+      weekStarterMu.set(r.roster_id, sMu)
+      weekStarterSd.set(r.roster_id, Math.sqrt(Math.max(1, sVar)))
+      weekMaxPfMu.set(r.roster_id, mMu)
+      weekMaxPfSd.set(r.roster_id, Math.sqrt(Math.max(1, mVar)))
+
+      totalStarterMu.set(r.roster_id, (totalStarterMu.get(r.roster_id) ?? 0) + sMu)
+      totalStarterVar.set(r.roster_id, (totalStarterVar.get(r.roster_id) ?? 0) + sVar)
+      totalMaxPfMu.set(r.roster_id, (totalMaxPfMu.get(r.roster_id) ?? 0) + mMu)
+      totalMaxPfVar.set(r.roster_id, (totalMaxPfVar.get(r.roster_id) ?? 0) + mVar)
+    }
+
+    for (const [firstId, secondId] of weekPairs.get(week) ?? []) {
+      const mu1 = weekStarterMu.get(firstId) ?? 0
+      const sd1 = weekStarterSd.get(firstId) ?? 15
+      const mu2 = weekStarterMu.get(secondId) ?? 0
+      const sd2 = weekStarterSd.get(secondId) ?? 15
+      const pooledSd = Math.sqrt(sd1 * sd1 + sd2 * sd2)
+      const p1 = normalCdf((mu1 - mu2) / Math.max(0.1, pooledSd))
+      winProbsByRoster.get(firstId)?.push(p1)
+      winProbsByRoster.get(secondId)?.push(1 - p1)
+    }
+
+    if (hasLeagueMedianMatch && count >= 2) {
+      const allMeans = [...weekStarterMu.values()].sort((a, b) => a - b)
+      const mid = count >>> 1
+      const medMu = count % 2 === 0 ? (allMeans[mid - 1] + allMeans[mid]) * 0.5 : allMeans[mid]
+      const medSd = 14
+      for (const r of data.rosters) {
+        const mu = weekStarterMu.get(r.roster_id) ?? 0
+        const sd = weekStarterSd.get(r.roster_id) ?? 15
+        const pooledSd = Math.sqrt(sd * sd + medSd * medSd)
+        const pMed = normalCdf((mu - medMu) / Math.max(0.1, pooledSd))
+        winProbsByRoster.get(r.roster_id)?.push(pMed)
+      }
+    }
+  }
+
+  const fullWinDists = new Map<number, Float64Array>()
+  for (const r of data.rosters) {
+    const probs = winProbsByRoster.get(r.roster_id) ?? []
+    const remDist = convolvePoissonBinomial(probs)
+    const bW = baseWins.get(r.roster_id) ?? 0
+    const fullDist = new Float64Array(bW + remDist.length)
+    for (let k = 0; k < remDist.length; k += 1) {
+      fullDist[bW + k] = remDist[k]
+    }
+    fullWinDists.set(r.roster_id, fullDist)
+  }
+
+  const pairwiseDominance = new Map<number, Map<number, number>>()
+  for (const r1 of data.rosters) {
+    pairwiseDominance.set(r1.roster_id, new Map<number, number>())
+    const dist1 = fullWinDists.get(r1.roster_id)!
+    const muPf1 = totalStarterMu.get(r1.roster_id) ?? 0
+    const varPf1 = totalStarterVar.get(r1.roster_id) ?? 100
+
+    for (const r2 of data.rosters) {
+      if (r1.roster_id === r2.roster_id) continue
+      const dist2 = fullWinDists.get(r2.roster_id)!
+      const muPf2 = totalStarterMu.get(r2.roster_id) ?? 0
+      const varPf2 = totalStarterVar.get(r2.roster_id) ?? 100
+      const tiebreakerProb = normalCdf((muPf1 - muPf2) / Math.sqrt(Math.max(1, varPf1 + varPf2)))
+
+      let pDominates = 0
+      for (let w1 = 0; w1 < dist1.length; w1 += 1) {
+        const probW1 = dist1[w1]
+        if (probW1 <= 1e-9) continue
+        for (let w2 = 0; w2 < dist2.length; w2 += 1) {
+          const probW2 = dist2[w2]
+          if (probW2 <= 1e-9) continue
+          const joint = probW1 * probW2
+          if (w1 > w2) {
+            pDominates += joint
+          } else if (w1 === w2) {
+            pDominates += joint * tiebreakerProb
+          }
+        }
+      }
+      pairwiseDominance.get(r1.roster_id)!.set(r2.roster_id, pDominates)
+    }
+  }
+
+  const playoffCount = count - nonPlayoffCount
+  const pairwiseLotteryDominance = new Map<number, Map<number, number>>()
+  for (const r1 of data.rosters) {
+    pairwiseLotteryDominance.set(r1.roster_id, new Map<number, number>())
+    const muM1 = totalMaxPfMu.get(r1.roster_id) ?? 0
+    const varM1 = totalMaxPfVar.get(r1.roster_id) ?? 100
+    for (const r2 of data.rosters) {
+      if (r1.roster_id === r2.roster_id) continue
+      const muM2 = totalMaxPfMu.get(r2.roster_id) ?? 0
+      const varM2 = totalMaxPfVar.get(r2.roster_id) ?? 100
+      const pEarlier = normalCdf((muM2 - muM1) / Math.sqrt(Math.max(1, varM1 + varM2)))
+      pairwiseLotteryDominance.get(r1.roster_id)!.set(r2.roster_id, pEarlier)
+    }
+  }
+
+  for (const r of data.rosters) {
+    const rId = r.roster_id
+    const domProbs: number[] = []
+    for (const other of data.rosters) {
+      if (other.roster_id === rId) continue
+      domProbs.push(pairwiseDominance.get(rId)?.get(other.roster_id) ?? 0.5)
+    }
+    const rankDist = convolvePoissonBinomial(domProbs)
+
+    const picks = new Array(count).fill(0)
+    let lotteryProbTotal = 0
+
+    for (let k = 0; k < rankDist.length; k += 1) {
+      const p = rankDist[k]
+      if (p <= 1e-9) continue
+      const seed = count - k
+      if (seed <= playoffCount) {
+        const pickSlot = count - seed + 1
+        picks[pickSlot - 1] += p
+      } else {
+        lotteryProbTotal += p
+      }
+    }
+
+    if (lotteryProbTotal > 1e-9) {
+      const lotDomProbs: number[] = []
+      for (const other of data.rosters) {
+        if (other.roster_id === rId) continue
+        lotDomProbs.push(pairwiseLotteryDominance.get(rId)?.get(other.roster_id) ?? 0.5)
+      }
+      const lotRankDist = convolvePoissonBinomial(lotDomProbs)
+      for (let lotIdx = 0; lotIdx < nonPlayoffCount; lotIdx += 1) {
+        const lotProb = lotRankDist[count - 1 - lotIdx] ?? 0
+        picks[lotIdx] += lotteryProbTotal * lotProb
+      }
+    }
+
+    const sum = picks.reduce((a, b) => a + b, 0)
+    if (sum > 0) {
+      for (let i = 0; i < count; i += 1) picks[i] /= sum
+    }
+    result.set(rId, picks)
+  }
+
+  return result
+}
+
 function assignBijectiveDraftPicks<T extends { probabilities: number[]; maxPf: number }>(
   teams: T[],
   nonPlayoffCount: number,
@@ -1593,14 +1859,40 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     }
   }
 
+  const analyticalProbabilities = computeAnalyticalProbabilities(
+    data,
+    compiledWeeks,
+    weekPairs,
+    firstSimWeek,
+    regularEnd,
+    baseFptsByRoster,
+    baseMaxPfByRoster,
+    slots,
+    count,
+    nonPlayoffCount,
+    hasLeagueMedianMatch,
+  )
+
+  const allEngineLabels = [
+    ...MODELS.map((model) => model.label),
+    'Analytical Gaussian convolution',
+  ]
+
   const rawTeams = [...stats.values()].map((team) => {
     const modelProbabilities = MODELS.map((model) =>
       team.modelPicks[model.key].slice(1).map((value) => value / SIMULATIONS_PER_MODEL),
     )
-    const probabilities = team.picks.slice(1).map((value) => value / TOTAL_SIMULATIONS)
+    const analyticalProbs = analyticalProbabilities.get(team.roster.roster_id) ?? new Array(count).fill(0)
+    const allEngineProbabilities = [...modelProbabilities, analyticalProbs]
+
+    const engineCount = allEngineProbabilities.length
+    const probabilities = new Array(count).fill(0).map((_, pickIdx) => {
+      return allEngineProbabilities.reduce((sum, eng) => sum + (eng[pickIdx] ?? 0), 0) / engineCount
+    })
+
     const probabilityRanges = probabilities.map((_, index) => ({
-      low: Math.min(...modelProbabilities.map((model) => model[index] ?? 0)),
-      high: Math.max(...modelProbabilities.map((model) => model[index] ?? 0)),
+      low: Math.min(...allEngineProbabilities.map((engine) => engine[index] ?? 0)),
+      high: Math.max(...allEngineProbabilities.map((engine) => engine[index] ?? 0)),
     }))
     const pickHolderId = pickOwners.get(team.roster.roster_id) ?? team.roster.roster_id
     const holder = data.rosters.find((roster) => roster.roster_id === pickHolderId)
@@ -1617,7 +1909,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       pickHolderId,
       probabilities,
       probabilityRanges,
-      modelNames: MODELS.map((model) => model.label),
+      modelNames: allEngineLabels,
       simulationCount: TOTAL_SIMULATIONS,
     }
   })
