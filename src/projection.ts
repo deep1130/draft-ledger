@@ -12,6 +12,7 @@ export interface ProjectedPick {
   probabilities: number[]
   probabilityRanges: Array<{ low: number; high: number }>
   modelNames: string[]
+  simulationCount: number
 }
 
 const SIMULATIONS_PER_MODEL = 500
@@ -22,6 +23,7 @@ const MODELS = [
   { key: 'recent-form', label: 'Recent-form adjusted', sampler: 'gaussian', variance: 0.9, formWeight: 0.35, projectionScale: 1 },
   { key: 'downside', label: 'Conservative downside stress', sampler: 'student-t', variance: 1.15, formWeight: 0, projectionScale: 0.9 },
 ] as const
+const TOTAL_SIMULATIONS = SIMULATIONS_PER_MODEL * MODELS.length
 const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 function score(stats: StatLine | undefined, scoring: Record<string, number>): number {
@@ -362,7 +364,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   }
   return [...stats.values()].map((team) => {
     const modelProbabilities = MODELS.map((model) => team.modelPicks[model.key].slice(1).map((value) => value / SIMULATIONS_PER_MODEL))
-    const probabilities = team.picks.slice(1).map((value) => value / (SIMULATIONS_PER_MODEL * MODELS.length))
+    const probabilities = team.picks.slice(1).map((value) => value / TOTAL_SIMULATIONS)
     const probabilityRanges = probabilities.map((_, index) => ({
       low: Math.min(...modelProbabilities.map((model) => model[index] ?? 0)),
       high: Math.max(...modelProbabilities.map((model) => model[index] ?? 0)),
@@ -385,6 +387,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       probabilities,
       probabilityRanges,
       modelNames: MODELS.map((model) => model.label),
+      simulationCount: TOTAL_SIMULATIONS,
     }
   }).sort((a, b) => a.pick - b.pick)
 }

@@ -7,7 +7,7 @@ import './App.css'
 const DEFAULT_LEAGUE_ID = '1329251955255574528'
 type View = 'order' | 'assets'
 const formatNumber = (value: number) => value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance < 0.005 ? '<1%' : `${Math.round(chance * 100)}%`
+const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
 
 function teamName(data: LeagueData, roster: LeagueData['rosters'][number]): string {
   const owner = data.users.find((user) => user.user_id === roster.owner_id)
@@ -92,7 +92,7 @@ function App() {
           {visiblePicks.map((team, index) => { const inLottery = team.pick <= nonPlayoffCount; const top = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).sort((a, b) => b.chance - a.chance).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(view === 'order' ? team.pick : index + 1).padStart(2, '0')}</span><span className="rank-label">{view === 'order' ? (inLottery ? 'LOTTERY' : `PLACE ${team.pick - nonPlayoffCount}`) : `SEED ${index + 1}`}</span></td><td><span className="franchise-name">{team.name}</span><span className="roster-id">ROSTER {team.roster.roster_id}</span></td>
             {view === 'order' && <td className="holder-cell">{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>}<td><span className="record-pill">{team.record}</span></td>
-            <td><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber} title={`${team.modelNames.join(' / ')}: ${formatChance(range.low)}–${formatChance(range.high)}`}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{formatChance(range.low)}–{formatChance(range.high)}</small></span>)}</div></td><td className="numeric-cell">{formatNumber(team.maxPf)}</td><td className="numeric-cell">{formatNumber(team.currentMaxPf)}</td>
+            <td><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber} title={`${Math.round(chance * team.simulationCount)} of ${team.simulationCount} simulations · ${team.modelNames.join(' / ')} range ${formatChance(range.low)}–${formatChance(range.high)}`}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{formatChance(range.low)}–{formatChance(range.high)}</small></span>)}</div></td><td className="numeric-cell">{formatNumber(team.maxPf)}</td><td className="numeric-cell">{formatNumber(team.currentMaxPf)}</td>
           </tr> })}
           {!data && <tr><td colSpan={7} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : 'Enter a public Sleeper league ID and refresh.'}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={7} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
