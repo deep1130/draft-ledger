@@ -14,11 +14,13 @@ export interface ProjectedPick {
   modelNames: string[]
 }
 
-const SIMULATIONS_PER_MODEL = 600
+const SIMULATIONS_PER_MODEL = 500
 const MODELS = [
-  { key: 'projection-low-variance', label: 'Projection-led · lower variance', variance: 0.75, formWeight: 0 },
-  { key: 'projection-balanced', label: 'Projection-led · balanced', variance: 1, formWeight: 0 },
-  { key: 'recent-form', label: 'Recent form · higher variance', variance: 1.25, formWeight: 0.25 },
+  { key: 'gaussian', label: 'Projection Gaussian', sampler: 'gaussian', variance: 1, formWeight: 0, projectionScale: 1 },
+  { key: 'student-t', label: 'Heavy-tail Student-t', sampler: 'student-t', variance: 1, formWeight: 0, projectionScale: 1 },
+  { key: 'bootstrap', label: 'Historical residual bootstrap', sampler: 'bootstrap', variance: 1, formWeight: 0, projectionScale: 1 },
+  { key: 'recent-form', label: 'Recent-form adjusted', sampler: 'gaussian', variance: 0.9, formWeight: 0.35, projectionScale: 1 },
+  { key: 'downside', label: 'Conservative downside stress', sampler: 'student-t', variance: 1.15, formWeight: 0, projectionScale: 0.9 },
 ] as const
 const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0
 
@@ -106,6 +108,38 @@ function randomFor(seed: number): () => number {
 
 function normal(random: () => number): number {
   return Math.sqrt(-2 * Math.log(Math.max(random(), Number.EPSILON))) * Math.cos(2 * Math.PI * random())
+}
+
+function studentT5(random: () => number): number {
+  const normalSample = normal(random)
+  const chiSquare = Array.from({ length: 5 }, () => normal(random) ** 2).reduce((sum, value) => sum + value, 0)
+  return normalSample / Math.sqrt(Math.max(chiSquare / 5, Number.EPSILON)) * Math.sqrt(3 / 5)
+}
+
+function bootstrapResidual(history: number[], index: number): number {
+  if (history.length < 3) return normalFallback()
+  const mean = history.reduce((sum, value) => sum + value, 0) / history.length
+  const deviation = sampleDeviation(history)
+  if (!deviation) return 0
+  return ((history[index % history.length] ?? mean) - mean) / deviation
+}
+
+function normalFallback(): number {
+  return 0
+}
+
+function sampleStandardizedResidual(
+  sampler: (typeof MODELS)[number]['sampler'],
+  random: () => number,
+  history: number[],
+  bootstrapIndex: number,
+): number {
+  if (sampler === 'bootstrap') {
+    if (history.length >= 3 && sampleDeviation(history) > 0) return bootstrapResidual(history, bootstrapIndex)
+    return normal(random)
+  }
+  if (sampler === 'student-t') return studentT5(random)
+  return normal(random)
 }
 
 function sampleDeviation(scores: number[]): number {
@@ -229,14 +263,18 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       const points = new Map<number, number>()
       for (const roster of data.rosters) {
         const mean = weeks.get(week)?.get(roster.roster_id)?.score ?? 0
-        const noise = week === data.currentWeek ? 0 : normal(random)
         const scoreDeviation = scoreDeviations.get(roster.roster_id) ?? leagueScoreDeviation
         const maxPfDeviation = maxPfDeviations.get(roster.roster_id) ?? leagueScoreDeviation * 0.65
         const form = formDeltas.get(roster.roster_id) ?? { score: 0, maxPf: 0 }
-        const projectedMean = mean + form.score * model.formWeight
+        const scoreHistory = data.historicalTeamScores[roster.roster_id] ?? []
+        const maxPfHistory = data.historicalMaxPf[roster.roster_id] ?? []
+        const historyLength = Math.max(scoreHistory.length, maxPfHistory.length, 1)
+        const bootstrapIndex = Math.floor(random() * historyLength)
+        const noise = week === data.currentWeek ? 0 : sampleStandardizedResidual(model.sampler, random, scoreHistory, bootstrapIndex)
+        const projectedMean = mean * model.projectionScale + form.score * model.formWeight
         const projected = week === data.currentWeek ? mean : Math.max(0, projectedMean + noise * scoreDeviation * model.variance)
         const maxPfMean = weeks.get(week)?.get(roster.roster_id)?.maxPf ?? 0
-        const projectedMaxPfMean = maxPfMean + form.maxPf * model.formWeight
+        const projectedMaxPfMean = maxPfMean * model.projectionScale + form.maxPf * model.formWeight
         const maxPfForWeek = week === data.currentWeek ? maxPfMean : Math.max(0, projectedMaxPfMean + noise * maxPfDeviation * model.variance)
         simulatedMaxPf.set(roster.roster_id, (simulatedMaxPf.get(roster.roster_id) ?? 0) + maxPfForWeek)
         points.set(roster.roster_id, projected)
@@ -283,8 +321,14 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       const play = (first: number, second: number, week: number) => {
         const firstForm = formDeltas.get(first)?.score ?? 0
         const secondForm = formDeltas.get(second)?.score ?? 0
-        const a = Math.max(0, (weeks.get(week)?.get(first)?.score ?? 0) + firstForm * model.formWeight + normal(random) * (scoreDeviations.get(first) ?? leagueScoreDeviation) * model.variance)
-        const b = Math.max(0, (weeks.get(week)?.get(second)?.score ?? 0) + secondForm * model.formWeight + normal(random) * (scoreDeviations.get(second) ?? leagueScoreDeviation) * model.variance)
+        const firstMean = (weeks.get(week)?.get(first)?.score ?? 0) * model.projectionScale + firstForm * model.formWeight
+        const secondMean = (weeks.get(week)?.get(second)?.score ?? 0) * model.projectionScale + secondForm * model.formWeight
+        const firstHistory = data.historicalTeamScores[first] ?? []
+        const secondHistory = data.historicalTeamScores[second] ?? []
+        const firstNoise = sampleStandardizedResidual(model.sampler, random, firstHistory, Math.floor(random() * Math.max(firstHistory.length, 1)))
+        const secondNoise = sampleStandardizedResidual(model.sampler, random, secondHistory, Math.floor(random() * Math.max(secondHistory.length, 1)))
+        const a = Math.max(0, firstMean + firstNoise * (scoreDeviations.get(first) ?? leagueScoreDeviation) * model.variance)
+        const b = Math.max(0, secondMean + secondNoise * (scoreDeviations.get(second) ?? leagueScoreDeviation) * model.variance)
         const winning = a === b ? (random() < 0.5 ? first : second) : a > b ? first : second
         return { winner: winning, loser: winning === first ? second : first }
       }

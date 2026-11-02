@@ -60,8 +60,6 @@ function App() {
   const tradedCount = data?.tradedPicks.filter((pick) => Number(pick.season) === Number(data.league.season) + 1 && pick.round === 1).length ?? 0
   const nonPlayoffCount = data ? Math.max(0, data.rosters.length - Number(data.league.settings.playoff_teams || 6)) : 6
   const currentWeek = data?.currentWeek ?? 0
-  const currentFeed = data?.weeks[currentWeek]
-  const currentTeamsWithPoints = currentFeed?.matchups.filter((matchup) => matchup.points > 0).length ?? 0
 
   return (
     <main className="app-shell">
@@ -79,7 +77,7 @@ function App() {
 
       <section className="summary-strip" aria-label="League summary">
         <div className="summary-item"><span className="summary-label">LEAGUE</span><strong>{data?.league.name ?? (busy ? 'Connecting…' : 'Sleeper league')}</strong><span className="summary-note">{data ? `${data.rosters.length} franchises · ${data.league.scoring_settings.rec ?? 1} PPR` : 'Public league data'}</span></div>
-        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ 18</span></strong><span className="summary-note">{currentTeamsWithPoints ? `${Math.ceil(currentTeamsWithPoints / 2)} matchups reporting points` : 'Current points + remaining projections'}</span></div>
+        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ 18</span></strong><span className="summary-note">Current week + remaining projections</span></div>
         <div className="summary-item"><span className="summary-label">LOTTERY PICKS</span><strong>{data ? `01 — ${String(nonPlayoffCount).padStart(2, '0')}` : '01 — 06'}</strong><span className="summary-note">Reverse Max Points For</span></div>
         <div className="summary-item"><span className="summary-label">PICKS IN PLAY</span><strong>{data ? `${tradedCount} TRADED` : '—'}</strong><span className="summary-note">{rookieYear} first-round ownership</span></div>
       </section>
@@ -91,7 +89,7 @@ function App() {
           {data?.tradedPicks.filter((pick) => Number(pick.season) === Number(data.league.season) + 1).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
           {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Connect a league to see pick ownership.'}</td></tr>}
         </tbody></table></div> : <div className="table-wrap"><table><thead><tr><th className="rank-col">{view === 'order' ? 'PICK' : 'SEED'}</th><th>FRANCHISE</th>{view === 'order' && <th>{rookieYear} PICK HOLDER</th>}<th>CURRENT RECORD</th><th>{view === 'order' ? 'PICK ODDS' : 'PLAYOFF CHANCE'}</th><th>MAX PF</th><th>PF</th></tr></thead><tbody>
-          {visiblePicks.map((team, index) => { const inLottery = team.pick <= nonPlayoffCount; const top = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).sort((a, b) => b.chance - a.chance).slice(0, 6); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
+          {visiblePicks.map((team, index) => { const inLottery = team.pick <= nonPlayoffCount; const top = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).sort((a, b) => b.chance - a.chance).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(view === 'order' ? team.pick : index + 1).padStart(2, '0')}</span><span className="rank-label">{view === 'order' ? (inLottery ? 'LOTTERY' : `PLACE ${team.pick - nonPlayoffCount}`) : `SEED ${index + 1}`}</span></td><td><span className="franchise-name">{team.name}</span><span className="roster-id">ROSTER {team.roster.roster_id}</span></td>
             {view === 'order' && <td className="holder-cell">{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>}<td><span className="record-pill">{team.record}</span></td>
             <td><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber} title={`${team.modelNames.join(' / ')}: ${formatChance(range.low)}–${formatChance(range.high)}`}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{formatChance(range.low)}–{formatChance(range.high)}</small></span>)}</div></td><td className="numeric-cell">{formatNumber(team.maxPf)}</td><td className="numeric-cell">{formatNumber(team.seasonPoints)}</td>
@@ -99,13 +97,13 @@ function App() {
           {!data && <tr><td colSpan={7} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : 'Enter a public Sleeper league ID and refresh.'}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={7} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
-        <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF FINISH</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · 3 MODELS · 1,800 SEASONS` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
+        <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF FINISH</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · 5 MODELS · 2,500 SEASONS` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
       </section>
 
       <details className="model-details" open>
         <summary>
           <span className="method-icon"><Trophy size={18} /></span>
-          <span className="model-heading"><strong>How projected picks are calculated</strong><small>Sleeper weekly projections · league scoring · 3 probability scenarios</small></span>
+          <span className="model-heading"><strong>How projected picks are calculated</strong><small>Sleeper projections · league scoring · 5 model methods</small></span>
           <ChevronDown className="model-chevron" size={17} />
         </summary>
         <div className="model-content">
@@ -115,7 +113,7 @@ function App() {
             <section><h3>Playoff qualification</h3><p>Current Sleeper wins/losses are carried forward. This league's extra league-average matchup is simulated in addition to head-to-head results. Seeds use record, then projected points for as the tiebreaker. The top six qualify; the playoff bracket includes two byes and a fifth-place game.</p></section>
             <section><h3>Pick assignment</h3><p>In every simulation, non-playoff teams are ordered strictly by final Max PF, lowest first, for picks 1–6; record does not order those picks. Playoff finish maps to picks 7–12. Traded picks keep the original franchise's projected slot and show the current owner separately.</p></section>
           </div>
-          <p className="model-caveat">The consensus is the average pick frequency across three scenarios: lower-variance projections, balanced projections, and higher-variance projections with a recent-form adjustment. The small range under each percentage shows the lowest-to-highest result among those models; it is a sensitivity range, not a confidence interval. There are 600 season simulations per scenario (1,800 total). Recent form uses only a few past weeks, so its influence is intentionally capped. Sleeper player/injury data is cached for up to 24 hours; Refresh updates the other feeds. Other projection providers or assumptions can still produce different odds.</p>
+          <p className="model-caveat">The consensus is the average pick frequency across five methods: Gaussian projection noise, heavy-tail Student-t noise, bootstrap-resampled team history, capped recent-form adjustment, and a conservative downside stress model. Each chip's small range is the lowest-to-highest result among these models; it is sensitivity to model choice, not a confidence interval. There are 500 season simulations per model (2,500 total). These methods share Sleeper projections and league data; they are not five independent projection sources. Sleeper player/injury data is cached for up to 24 hours; Refresh updates the other feeds. Different providers or assumptions can still produce different odds.</p>
         </div>
       </details>
       <div className="bottom-note">UNOFFICIAL DYNASTY TOOL <span>·</span> LIVE SCORES AND PLAYER PROJECTIONS BY SLEEPER</div>
