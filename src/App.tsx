@@ -163,6 +163,10 @@ function App() {
               onKeyDown={(event) => { if (event.key === 'Enter') void refresh() }}
               placeholder="League ID"
               aria-label="Sleeper League ID"
+              inputMode="numeric"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
             <button
               type="button"

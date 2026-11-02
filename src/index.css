@@ -33,16 +33,24 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 360px; background: var(--bg); }
+html {
+  min-width: 320px;
+  background: var(--bg);
+  overflow-x: hidden;
+  width: 100%;
+}
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   color: var(--ink);
   background: var(--bg);
+  overflow-x: hidden;
+  width: 100%;
 }
 button, input { font: inherit; }
 button { color: inherit; }
 a { color: inherit; }
-#root { min-height: 100vh; }
+#root { min-height: 100vh; min-height: 100dvh; }
 ::selection { color: #0a0b0d; background: #93c5fd; }
