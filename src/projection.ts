@@ -33,40 +33,50 @@ const MODELS = [
     label: 'Player-level Gamma',
     sampler: 'gamma',
     teamCorrSd: 0.18,
-    useBayesianForm: false,
-    useAttrition: false,
+    rosOffenseSd: 0.10,
+    rosPlayerScale: 1.0,
+    attritionScale: 1.0,
+    useStrongBayesianForm: false,
   },
   {
     key: 'boom-bust',
     label: 'Heavy-tail boom/bust',
     sampler: 'lognormal',
     teamCorrSd: 0.22,
-    useBayesianForm: false,
-    useAttrition: false,
+    rosOffenseSd: 0.12,
+    rosPlayerScale: 1.15,
+    attritionScale: 1.0,
+    useStrongBayesianForm: false,
   },
   {
     key: 'bootstrap',
     label: 'Empirical league bootstrap',
     sampler: 'bootstrap',
     teamCorrSd: 0.16,
-    useBayesianForm: false,
-    useAttrition: false,
+    rosOffenseSd: 0.09,
+    rosPlayerScale: 0.90,
+    attritionScale: 0.95,
+    useStrongBayesianForm: false,
   },
   {
     key: 'bayesian-form',
     label: 'Bayesian form & lineup efficiency',
     sampler: 'gamma',
     teamCorrSd: 0.18,
-    useBayesianForm: true,
-    useAttrition: false,
+    rosOffenseSd: 0.10,
+    rosPlayerScale: 0.95,
+    attritionScale: 1.0,
+    useStrongBayesianForm: true,
   },
   {
     key: 'attrition',
     label: 'Injury attrition & bench stress',
     sampler: 'gamma',
     teamCorrSd: 0.20,
-    useBayesianForm: false,
-    useAttrition: true,
+    rosOffenseSd: 0.11,
+    rosPlayerScale: 1.10,
+    attritionScale: 1.45,
+    useStrongBayesianForm: false,
   },
 ] as const
 
@@ -75,24 +85,61 @@ type ModelKey = ModelConfig['key']
 
 const TOTAL_SIMULATIONS = SIMULATIONS_PER_MODEL * MODELS.length
 
-// Empirically calibrated positional dispersion theta where SD(X) = theta * sqrt(mean).
-const POSITIONAL_THETA: Record<string, number> = {
-  QB: 1.85,
-  RB: 1.95,
-  WR: 2.02,
-  TE: 2.10,
-  K: 1.65,
-  DEF: 1.90,
+// Baseline 1-PPR single-game positional dispersion theta around pre-game projections (scaled dynamically by league scoring).
+const BASE_POSITIONAL_THETA: Record<string, number> = {
+  QB: 1.98,
+  RB: 2.14,
+  WR: 2.26,
+  TE: 2.22,
+  K: 1.75,
+  DEF: 1.95,
 }
 
-// Weekly baseline surprise-inactive/injury attrition rates by position for Model 5.
-const POSITIONAL_ATTRITION: Record<string, number> = {
-  QB: 0.025,
-  RB: 0.06,
-  WR: 0.04,
-  TE: 0.04,
-  K: 0.015,
+// Weekly per-game new-injury hazard by position (evolves into multi-week Markov spells across simulated weeks).
+const POSITIONAL_INJURY_HAZARD: Record<string, number> = {
+  QB: 0.022,
+  RB: 0.046,
+  WR: 0.033,
+  TE: 0.036,
+  K: 0.010,
   DEF: 0.0,
+}
+
+function computeLeaguePositionalTheta(scoring: Record<string, number>): Record<string, number> {
+  const passYd = scoring.pass_yd ?? 0.04
+  const passTd = scoring.pass_td ?? 4
+  const rushYd = scoring.rush_yd ?? 0.1
+  const rushTd = scoring.rush_td ?? 6
+  const rec = scoring.rec ?? 1
+  const recYd = scoring.rec_yd ?? 0.1
+  const recTd = scoring.rec_td ?? 6
+  const teBonus = scoring.bonus_rec_te ?? 0
+
+  const qbScale = Math.max(
+    0.7,
+    (245 * passYd + 1.65 * passTd + 18 * rushYd + 0.15 * rushTd) / (245 * 0.04 + 1.65 * 4 + 1.8 + 0.9),
+  )
+  const rbScale = Math.max(
+    0.7,
+    (62 * rushYd + 0.5 * rushTd + 2.8 * rec + 22 * recYd + 0.12 * recTd) / (6.2 + 3.0 + 2.8 + 2.2 + 0.72),
+  )
+  const wrScale = Math.max(
+    0.7,
+    (4.8 * rec + 62 * recYd + 0.42 * recTd) / (4.8 + 6.2 + 2.52),
+  )
+  const teScale = Math.max(
+    0.7,
+    (4.2 * (rec + teBonus) + 46 * recYd + 0.35 * recTd) / (4.2 + 4.6 + 2.1),
+  )
+
+  return {
+    QB: BASE_POSITIONAL_THETA.QB * Math.sqrt(qbScale),
+    RB: BASE_POSITIONAL_THETA.RB * Math.sqrt(rbScale),
+    WR: BASE_POSITIONAL_THETA.WR * Math.sqrt(wrScale),
+    TE: BASE_POSITIONAL_THETA.TE * Math.sqrt(teScale),
+    K: BASE_POSITIONAL_THETA.K,
+    DEF: BASE_POSITIONAL_THETA.DEF,
+  }
 }
 
 const POSITION_BIT: Record<string, number> = {
@@ -383,43 +430,261 @@ function classifyInjury(player?: SleeperPlayer): InjuryTier {
   return 'healthy'
 }
 
-function playProbability(
+function liveInGamePlayProbability(tier: InjuryTier): number {
+  switch (tier) {
+    case 'ir':
+    case 'out':
+      return 0
+    case 'doubtful':
+      return 0.20
+    case 'questionable':
+      return 0.78
+    case 'probable':
+      return 0.94
+    case 'healthy':
+      return 1
+  }
+}
+
+function drawInitialWeeksOut(
   tier: InjuryTier,
-  position: string,
-  weeksAhead: number,
-  useAttrition: boolean,
+  activeGameCount: number,
+  lastScoredWeek: number,
+  injuredInLiveGame: boolean,
+  rng: RandomSource,
 ): number {
-  if (weeksAhead <= 0) {
-    switch (tier) {
-      case 'ir':
-      case 'out':
-        return 0
-      case 'doubtful':
-        return 0.20
-      case 'questionable':
-        return 0.75
-      case 'probable':
-        return 0.93
-      case 'healthy':
-        return 1
+  switch (tier) {
+    case 'healthy':
+      return 0
+    case 'probable':
+      if (injuredInLiveGame) return rng.next() < 0.05 ? 2 : 0
+      return rng.next() < 0.06 ? 1 : 0
+    case 'questionable': {
+      if (injuredInLiveGame) return rng.next() < 0.16 ? 2 : 0
+      if (rng.next() >= 0.22) return 0
+      const u = rng.next()
+      return u < 0.68 ? 1 : (u < 0.90 ? 2 : 3)
+    }
+    case 'doubtful': {
+      if (rng.next() < 0.20 && !injuredInLiveGame) return 0
+      const u = rng.next()
+      const spell = u < 0.50 ? 1 : (u < 0.80 ? 2 + (rng.nextU32() & 1) : 4 + (rng.nextU32() % 3))
+      return injuredInLiveGame ? spell + 1 : spell
+    }
+    case 'out': {
+      const u = rng.next()
+      const spell = u < 0.44
+        ? 1
+        : (u < 0.72 ? 2 : (u < 0.88 ? 3 + (rng.nextU32() & 1) : 5 + (rng.nextU32() % 4)))
+      if (injuredInLiveGame) {
+        return rng.next() < 0.60 ? spell + 1 : 1
+      }
+      return spell
+    }
+    case 'ir': {
+      const u = rng.next()
+      if (activeGameCount === 0 && lastScoredWeek >= 4) {
+        return u < 0.48 ? 14 : (u < 0.78 ? 3 + (rng.nextU32() % 3) : 2)
+      }
+      const spell = u < 0.26
+        ? 14
+        : (u < 0.60 ? 3 + (rng.nextU32() % 3) : (u < 0.85 ? 2 : 1))
+      return injuredInLiveGame ? spell + 1 : spell
+    }
+  }
+}
+
+function drawNewInjuryWeeks(rng: RandomSource): number {
+  const u = rng.next()
+  if (u < 0.48) return 1
+  if (u < 0.78) return 2 + (rng.nextU32() & 1)
+  return 4 + (rng.nextU32() % 5)
+}
+
+interface GlobalPlayerProfile {
+  id: string
+  injuryTier: InjuryTier
+  injuryHazardBase: number
+  activeGameCount: number
+  injuredInLiveGame: boolean
+  survivedLivePostHealthy: boolean
+  byeWeekMask: number
+  rosUncertSd: number
+  ebStandardMult: number
+  ebStrongFormMult: number
+}
+
+function buildGlobalPlayerProfiles(
+  data: LeagueData,
+  positionalTheta: Record<string, number>,
+  scoring: Record<string, number>,
+  hasMilestoneBonuses: boolean,
+  firstSimWeek: number,
+  regularEnd: number,
+  playoffEnd: number,
+): { profiles: GlobalPlayerProfile[]; idToGlobalIndex: Map<string, number> } {
+  const idToGlobalIndex = new Map<string, number>()
+  const profiles: GlobalPlayerProfile[] = []
+
+  const isLiveCurrentWeek = data.currentWeek > data.lastScoredWeek
+  const liveFeed = isLiveCurrentWeek ? data.weeks[data.currentWeek] : undefined
+  const liveByeSet = new Set(liveFeed?.byes ?? [])
+  const livePointsByPlayer = new Map<string, number>()
+  if (liveFeed) {
+    for (const m of liveFeed.matchups) {
+      for (const [pid, pts] of Object.entries(m.players_points ?? {})) {
+        if (typeof pts === 'number' && Number.isFinite(pts)) {
+          livePointsByPlayer.set(pid, pts)
+        }
+      }
     }
   }
 
-  let injuryPersistMiss = 0
-  if (tier === 'ir') {
-    const irSchedule = [0, 0.65, 0.40, 0.20, 0.08]
-    injuryPersistMiss = irSchedule[weeksAhead] ?? (useAttrition ? 0.05 : 0)
-  } else if (tier === 'out') {
-    injuryPersistMiss = Math.pow(0.32, weeksAhead)
-  } else if (tier === 'doubtful') {
-    injuryPersistMiss = 0.28 * Math.pow(0.35, weeksAhead - 1)
-  } else if (tier === 'questionable' && useAttrition) {
-    injuryPersistMiss = 0.10 * Math.pow(0.5, weeksAhead - 1)
+  const byeMaskByNflTeam = new Map<string, number>()
+  for (let w = firstSimWeek; w <= playoffEnd; w += 1) {
+    for (const abbr of data.weeks[w]?.byes ?? []) {
+      const norm = normalizeNflTeam(abbr)
+      if (norm) byeMaskByNflTeam.set(norm, (byeMaskByNflTeam.get(norm) ?? 0) | (1 << w))
+    }
   }
 
-  const baseAttrition = useAttrition ? (POSITIONAL_ATTRITION[position] ?? 0.035) : 0
-  const playProb = (1 - injuryPersistMiss) * (1 - baseAttrition)
-  return Math.max(0, Math.min(1, playProb))
+  const allRosterPlayerIds = new Set<string>()
+  for (const roster of data.rosters) {
+    for (const id of roster.players ?? []) allRosterPlayerIds.add(id)
+  }
+  if (liveFeed) {
+    for (const m of liveFeed.matchups) {
+      for (const id of m.players ?? []) allRosterPlayerIds.add(id)
+    }
+  }
+
+  const futureProjWeeks: number[] = []
+  for (let w = Math.max(firstSimWeek, data.currentWeek + 1); w <= regularEnd; w += 1) {
+    if (data.weeks[w]) futureProjWeeks.push(w)
+  }
+
+  for (const id of allRosterPlayerIds) {
+    const player = data.players[id]
+    const nflTeam = normalizeNflTeam(player?.team)
+    const positions = player?.fantasy_positions?.length
+      ? player.fantasy_positions
+      : (player?.position ? [player.position] : [])
+    const primaryPos = player?.position ?? positions[0] ?? 'WR'
+    const injuryTier = classifyInjury(player)
+
+    const histScores = data.historicalPlayerPoints[id] ?? []
+    const liveRawState = nflTeam && liveFeed ? liveFeed.gameStates[nflTeam] : undefined
+    const liveOnBye = Boolean(nflTeam && liveByeSet.has(nflTeam))
+    const livePts = livePointsByPlayer.get(id) ?? 0
+
+    const observedScores =
+      isLiveCurrentWeek && !liveOnBye && liveRawState === 'post'
+        ? [...histScores, livePts]
+        : histScores
+
+    const activeScores = observedScores.filter((pts) => pts > 0.5)
+    const activeGameCount = activeScores.length
+
+    const injuredInLiveGame =
+      isLiveCurrentWeek &&
+      !liveOnBye &&
+      (liveRawState === 'post' || liveRawState === 'in') &&
+      livePts > 0 &&
+      (injuryTier === 'out' || injuryTier === 'ir' || injuryTier === 'doubtful' || injuryTier === 'questionable')
+
+    const survivedLivePostHealthy =
+      isLiveCurrentWeek && !liveOnBye && liveRawState === 'post' && injuryTier === 'healthy'
+
+    // Calculate future average non-bye Sleeper projection.
+    let futureProjSum = 0
+    let futureProjCount = 0
+    for (const w of futureProjWeeks) {
+      const feed = data.weeks[w]
+      if (!feed) continue
+      if (nflTeam && feed.byes.includes(nflTeam)) continue
+      const pStats = feed.projections[id]
+      const mu =
+        baseProjectionScore(pStats, scoring) +
+        (hasMilestoneBonuses ? expectedMilestoneBonus(pStats, scoring) : 0)
+      if (mu > 0.5) {
+        futureProjSum += mu
+        futureProjCount += 1
+      }
+    }
+    const meanFutureProj = futureProjCount > 0 ? futureProjSum / futureProjCount : 0
+
+    // Guard against boosting healthy players who recently lost their role (3 straight recorded <=0.5 weeks guarantees >=2 non-bye DNPs).
+    const recentHealthyBenched =
+      injuryTier === 'healthy' &&
+      observedScores.length >= 3 &&
+      observedScores[observedScores.length - 1] <= 0.5 &&
+      observedScores[observedScores.length - 2] <= 0.5 &&
+      observedScores[observedScores.length - 3] <= 0.5
+
+    let ebStandardMult = 1
+    let ebStrongFormMult = 1
+    let recencyActiveMean = meanFutureProj
+
+    if (activeGameCount >= 2 && meanFutureProj > 0.8) {
+      const sortedActive = [...activeScores].sort((a, b) => a - b)
+      const mid = sortedActive.length >>> 1
+      const medianActive =
+        sortedActive.length % 2 === 0
+          ? (sortedActive[mid - 1] + sortedActive[mid]) * 0.5
+          : sortedActive[mid]
+      const theta = positionalTheta[primaryPos] ?? 2.15
+      const winCap = medianActive + 2.1 * theta * Math.sqrt(Math.max(medianActive, 4))
+
+      let wSum = 0
+      let valSum = 0
+      for (let j = 0; j < activeGameCount; j += 1) {
+        const w = 1 + 0.30 * j
+        wSum += w
+        valSum += w * Math.min(activeScores[j], winCap)
+      }
+      recencyActiveMean = wSum > 0 ? valSum / wSum : meanFutureProj
+
+      if (!recentHealthyBenched || recencyActiveMean < meanFutureProj) {
+        const maxUp = meanFutureProj >= 2.0 ? 2.65 : 1.75
+        const maxUpStrong = meanFutureProj >= 2.0 ? 3.00 : 1.95
+        const alphaStd = activeGameCount / (activeGameCount + 7.0)
+        const alphaStrong = activeGameCount / (activeGameCount + 3.5)
+        const blendedStd = (1 - alphaStd) * meanFutureProj + alphaStd * recencyActiveMean
+        const blendedStrong = (1 - alphaStrong) * meanFutureProj + alphaStrong * recencyActiveMean
+        ebStandardMult = Math.max(0.58, Math.min(maxUp, blendedStd / meanFutureProj))
+        ebStrongFormMult = Math.max(0.50, Math.min(maxUpStrong, blendedStrong / meanFutureProj))
+      }
+    }
+
+    const calibratedMu = meanFutureProj * ebStandardMult
+    let rosUncertSd = 0.32
+    if (primaryPos === 'QB' && calibratedMu >= 15 && activeGameCount >= 4) {
+      rosUncertSd = 0.14
+    } else if (calibratedMu >= 11 && activeGameCount >= 4) {
+      rosUncertSd = 0.18
+    } else if (calibratedMu >= 5 && activeGameCount >= 2) {
+      rosUncertSd = 0.24
+    }
+
+    const baseHazard = POSITIONAL_INJURY_HAZARD[primaryPos] ?? 0.032
+    const fragileMult = injuryTier === 'healthy' ? 1.0 : 1.25
+
+    idToGlobalIndex.set(id, profiles.length)
+    profiles.push({
+      id,
+      injuryTier,
+      injuryHazardBase: baseHazard * fragileMult,
+      activeGameCount,
+      injuredInLiveGame,
+      survivedLivePostHealthy,
+      byeWeekMask: nflTeam ? (byeMaskByNflTeam.get(nflTeam) ?? 0) : 0,
+      rosUncertSd,
+      ebStandardMult,
+      ebStrongFormMult,
+    })
+  }
+
+  return { profiles, idToGlobalIndex }
 }
 
 interface EmpiricalBootstrapPools {
@@ -464,6 +729,7 @@ type GameStateCode = 0 | 1 | 2 | 3
 
 interface CompiledPlayerWeek {
   id: string
+  globalPlayerIndex: number
   player: SleeperPlayer | undefined
   posMask: number
   nflTeamIndex: number
@@ -473,8 +739,9 @@ interface CompiledPlayerWeek {
   expectedBonus: number
   remFraction: number
   theta2: number
-  pPlayBase: number
-  pPlayAttrition: number
+  stdScale: number
+  strongFormScale: number
+  rosWeight: number
   bootstrapPool: Float64Array
   projPassYd: number
   projPassCmp: number
@@ -652,66 +919,16 @@ function samplePlayerRemainingPoints(
   return baseSimulated + bonus
 }
 
-interface BayesianRosterCalibration {
-  formMultiplier: number
-  lineupEfficiency: number
-}
-
-function calibrateBayesianForm(
-  data: LeagueData,
-  compiledWeeks: Map<number, Map<number, CompiledRosterWeek>>,
-  slots: readonly string[],
-  firstSimWeek: number,
-  regularEnd: number,
-): Map<number, BayesianRosterCalibration> {
-  const result = new Map<number, BayesianRosterCalibration>()
+function calibrateLineupEfficiency(data: LeagueData): Map<number, number> {
+  const result = new Map<number, number>()
   const completedWeeks = data.lastScoredWeek
-
-  const upcomingWeeks: number[] = []
-  for (let w = firstSimWeek; w <= regularEnd; w += 1) {
-    if (w > data.currentWeek && compiledWeeks.has(w)) upcomingWeeks.push(w)
-  }
 
   for (const roster of data.rosters) {
     const scoreHist = data.historicalTeamScores[roster.roster_id] ?? []
     const maxPfHist = data.historicalMaxPf[roster.roster_id] ?? []
     if (completedWeeks < 2 || scoreHist.length < 2) {
-      result.set(roster.roster_id, { formMultiplier: 1, lineupEfficiency: 1 })
+      result.set(roster.roster_id, 1)
       continue
-    }
-
-    const startIdx = Math.max(0, scoreHist.length - 4)
-    let recentScoreSum = 0
-    let recentWeightSum = 0
-    for (let i = startIdx; i < scoreHist.length; i += 1) {
-      const w = i - startIdx + 1
-      recentScoreSum += scoreHist[i] * w
-      recentWeightSum += w
-    }
-    const recentStarterAvg = recentWeightSum > 0 ? recentScoreSum / recentWeightSum : 0
-
-    let projStarterAvg = 0
-    if (upcomingWeeks.length > 0) {
-      let sum = 0
-      for (const w of upcomingWeeks) {
-        const rw = compiledWeeks.get(w)?.get(roster.roster_id)
-        if (!rw) continue
-        const candidates = rw.players.map((pw) => ({
-          id: pw.id,
-          player: pw.player,
-          points: (pw.remBaseMu + pw.expectedBonus) * pw.pPlayBase,
-        }))
-        sum += selectOptimalLineup(candidates, slots).total
-      }
-      projStarterAvg = sum / upcomingWeeks.length
-    }
-
-    let formMultiplier = 1
-    if (projStarterAvg > 40 && recentStarterAvg > 40) {
-      const rawRatio = recentStarterAvg / projStarterAvg
-      const recentN = scoreHist.length - startIdx
-      const shrinkWeight = recentN / (recentN + 14)
-      formMultiplier = Math.max(0.92, Math.min(1.08, 1 + (rawRatio - 1) * shrinkWeight))
     }
 
     const histPfSum = scoreHist.reduce((s, v) => s + v, 0)
@@ -725,7 +942,7 @@ function calibrateBayesianForm(
       lineupEfficiency = Math.max(0.90, Math.min(1.03, 1 + (rawEfficiency - 1) * effWeight))
     }
 
-    result.set(roster.roster_id, { formMultiplier, lineupEfficiency })
+    result.set(roster.roster_id, lineupEfficiency)
   }
 
   return result
@@ -820,6 +1037,17 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     return next
   }
 
+  const positionalTheta = computeLeaguePositionalTheta(scoring)
+  const { profiles: globalProfiles, idToGlobalIndex } = buildGlobalPlayerProfiles(
+    data,
+    positionalTheta,
+    scoring,
+    hasMilestoneBonuses,
+    firstSimWeek,
+    regularEnd,
+    playoffEnd,
+  )
+
   const bootstrapPools = buildEmpiricalBootstrapPools(data)
   const compiledWeeks = new Map<number, Map<number, CompiledRosterWeek>>()
   let maxCompiledPlayers = slots.length
@@ -885,19 +1113,18 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
           const activeInGame = lockedPoints > 0 || (injuryTier !== 'out' && injuryTier !== 'ir')
           const liveAvail = lockedPoints > 0
             ? 1
-            : (activeInGame ? playProbability(injuryTier, primaryPos, 0, false) : 0)
+            : (activeInGame ? liveInGamePlayProbability(injuryTier) : 0)
           remBaseMu = baseMu * remFraction * liveAvail
           expectedBonus = expBonus * remFraction * liveAvail
         }
 
-        const pPlayBase = playProbability(injuryTier, primaryPos, weeksAhead, false)
-        const pPlayAttrition = playProbability(injuryTier, primaryPos, weeksAhead, true)
+        const canEverPlayThisWeek = !(weeksAhead === 0 && (injuryTier === 'ir' || injuryTier === 'out'))
         const isActualStarter = actualStarterSet.has(id)
 
         const neverScores =
           !isActualStarter &&
           lockedPoints <= 0 &&
-          (remBaseMu <= 0.02 || (pPlayBase <= 0 && pPlayAttrition <= 0))
+          (remBaseMu <= 0.02 || !canEverPlayThisWeek)
         if (neverScores) continue
 
         let rawMask = 0
@@ -910,12 +1137,21 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         if (effectiveMask === 0 && !isActualStarter && !hasExoticActivePos) continue
         if (popcount(effectiveMask) > 1) hasEffectiveMultiPos = true
 
-        const theta = POSITIONAL_THETA[primaryPos] ?? 1.95
-        const tier = remBaseMu >= 10 ? 'high' : 'low'
+        const globalPlayerIndex = idToGlobalIndex.get(id) ?? -1
+        const profile = globalPlayerIndex >= 0 ? globalProfiles[globalPlayerIndex] : undefined
+        const ebStd = profile?.ebStandardMult ?? 1
+        const ebStrong = profile?.ebStrongFormMult ?? 1
+        const stdScale = state === 3 ? (weeksAhead > 0 ? ebStd : 1 + 0.5 * (ebStd - 1)) : 1
+        const strongFormScale = state === 3 ? (weeksAhead > 0 ? ebStrong : 1 + 0.5 * (ebStrong - 1)) : 1
+        const rosWeight = state === 3 ? (weeksAhead > 0 ? 1 : 0.35) : 0
+
+        const theta = positionalTheta[primaryPos] ?? 2.15
+        const tier = remBaseMu * stdScale >= 10 ? 'high' : 'low'
         const bootstrapPool = bootstrapPools.byKey[`${primaryPos}:${tier}`] ?? bootstrapPools.fallback
         idToIndex.set(id, compiledPlayers.length)
         compiledPlayers.push({
           id,
+          globalPlayerIndex,
           player,
           posMask: effectiveMask,
           nflTeamIndex: getNflTeamId(nflTeam),
@@ -925,8 +1161,9 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
           expectedBonus,
           remFraction,
           theta2: theta * theta,
-          pPlayBase,
-          pPlayAttrition,
+          stdScale,
+          strongFormScale,
+          rosWeight,
           bootstrapPool,
           projPassYd: num(projStats?.pass_yd),
           projPassCmp: num(projStats?.pass_cmp),
@@ -979,7 +1216,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     weekPairs.set(week, pairs)
   }
 
-  const bayesianCalibration = calibrateBayesianForm(data, compiledWeeks, slots, firstSimWeek, regularEnd)
+  const lineupEfficiencyByRoster = calibrateLineupEfficiency(data)
 
   const baseMaxPfByRoster = new Map<number, number>()
   const baseFptsByRoster = new Map<number, number>()
@@ -1010,7 +1247,11 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   )
 
   const numNflTeams = Math.max(1, nflTeamToId.size)
+  const numGlobalPlayers = globalProfiles.length
   const nflTeamShocks = new Float64Array(numNflTeams)
+  const nflTeamRosMult = new Float64Array(numNflTeams)
+  const playerRosMult = new Float64Array(Math.max(1, numGlobalPlayers))
+  const playerWeeksOut = new Int16Array(Math.max(1, numGlobalPlayers))
   const bufLen = Math.max(maxCompiledPlayers, 1)
   const scratchScores = new Float64Array(bufLen)
   const scratchExpected = new Float64Array(bufLen)
@@ -1031,6 +1272,56 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     }
   }
 
+  function initSeasonLatentState(model: ModelConfig, rng: RandomSource): void {
+    if (model.rosOffenseSd <= 0) {
+      nflTeamRosMult.fill(1)
+    } else {
+      const offVar = model.rosOffenseSd * model.rosOffenseSd
+      const offShape = 1 / offVar
+      for (let t = 0; t < numNflTeams; t += 1) {
+        nflTeamRosMult[t] = sampleGamma(offShape, rng) * offVar
+      }
+    }
+
+    for (let g = 0; g < numGlobalPlayers; g += 1) {
+      const prof = globalProfiles[g]
+      const pSd = prof.rosUncertSd * model.rosPlayerScale
+      if (pSd <= 0) {
+        playerRosMult[g] = 1
+      } else {
+        const pVar = pSd * pSd
+        playerRosMult[g] = sampleGamma(1 / pVar, rng) * pVar
+      }
+      playerWeeksOut[g] = drawInitialWeeksOut(
+        prof.injuryTier,
+        prof.activeGameCount,
+        data.lastScoredWeek,
+        prof.injuredInLiveGame,
+        rng,
+      )
+    }
+  }
+
+  function advanceMarkovInjuriesOneWeek(
+    completedWeek: number,
+    attritionScale: number,
+    rng: RandomSource,
+  ): void {
+    for (let g = 0; g < numGlobalPlayers; g += 1) {
+      if (playerWeeksOut[g] > 0) {
+        playerWeeksOut[g] -= 1
+        continue
+      }
+      const prof = globalProfiles[g]
+      if (((prof.byeWeekMask >>> completedWeek) & 1) !== 0) continue
+      if (completedWeek === data.currentWeek && prof.survivedLivePostHealthy) continue
+      const hazard = prof.injuryHazardBase * attritionScale
+      if (hazard > 0 && rng.next() < hazard) {
+        playerWeeksOut[g] = drawNewInjuryWeeks(rng)
+      }
+    }
+  }
+
   function simulateRosterForWeek(
     rw: CompiledRosterWeek,
     rosterId: number,
@@ -1041,9 +1332,9 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   ): { starterScore: number; maxPfScore: number } {
     const players = rw.players
     const n = players.length
-    const calib = model.useBayesianForm ? bayesianCalibration.get(rosterId) : undefined
-    const formScale = calib?.formMultiplier ?? 1
-    const lineupEfficiency = calib?.lineupEfficiency ?? 1
+    const lineupEfficiency = model.useStrongBayesianForm
+      ? (lineupEfficiencyByRoster.get(rosterId) ?? 1)
+      : 1
 
     for (let i = 0; i < n; i += 1) {
       const pw = players[i]
@@ -1067,33 +1358,38 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         const remSim = samplePlayerRemainingPoints(
           pw,
           teamMult,
-          formScale,
+          1,
           model.sampler,
           milestoneWeights,
           inIdioFactor,
           rng,
         )
-        scratchExpected[i] = pw.lockedPoints + (pw.remBaseMu + pw.expectedBonus) * formScale
+        scratchExpected[i] = pw.lockedPoints + pw.remBaseMu + pw.expectedBonus
         scratchScores[i] = pw.lockedPoints + remSim
         continue
       }
 
-      const pPlay = model.useAttrition ? pw.pPlayAttrition : pw.pPlayBase
-      const plays = pPlay >= 1 ? true : (pPlay <= 0 ? false : rng.next() < pPlay)
-      if (!plays) {
+      const gIdx = pw.globalPlayerIndex
+      if (gIdx >= 0 && playerWeeksOut[gIdx] > 0) {
         scratchAvailable[i] = 0
         scratchExpected[i] = 0
         scratchScores[i] = 0
         continue
       }
 
+      const baseScale = model.useStrongBayesianForm ? pw.strongFormScale : pw.stdScale
+      const rawRos =
+        (gIdx >= 0 ? playerRosMult[gIdx] : 1) *
+        (pw.nflTeamIndex >= 0 ? nflTeamRosMult[pw.nflTeamIndex] : 1)
+      const effectiveScale = baseScale * (pw.rosWeight > 0 ? 1 + pw.rosWeight * (rawRos - 1) : 1)
+
       scratchAvailable[i] = 1
-      scratchExpected[i] = (pw.remBaseMu + pw.expectedBonus) * formScale
+      scratchExpected[i] = (pw.remBaseMu + pw.expectedBonus) * effectiveScale
       const teamMult = pw.nflTeamIndex >= 0 ? nflTeamShocks[pw.nflTeamIndex] : 1
       scratchScores[i] = samplePlayerRemainingPoints(
         pw,
         teamMult,
-        formScale,
+        effectiveScale,
         model.sampler,
         milestoneWeights,
         fullIdioVarFactor,
@@ -1183,6 +1479,9 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     const fullIdioVarFactor = Math.max(0.45, (1 - 0.35 * corrVar) / (1 + corrVar))
 
     for (let run = 0; run < SIMULATIONS_PER_MODEL; run += 1) {
+      initSeasonLatentState(model, rng)
+      let markovCurrentWeek = Math.min(firstSimWeek, data.currentWeek)
+
       const simulatedMaxPf = new Map<number, number>(baseMaxPfByRoster)
       const records = new Map(
         data.rosters.map((roster) => [
@@ -1197,6 +1496,11 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       )
 
       for (let week = firstSimWeek; week <= regularEnd; week += 1) {
+        while (markovCurrentWeek < week) {
+          advanceMarkovInjuriesOneWeek(markovCurrentWeek, model.attritionScale, rng)
+          markovCurrentWeek += 1
+        }
+
         const weekRosters = compiledWeeks.get(week)
         if (!weekRosters) continue
 
@@ -1282,15 +1586,19 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
 
       const playoffWeekScores = new Map<number, Map<number, number>>()
       const getPlayoffScore = (rosterId: number, week: number): number => {
-        let weekCache = playoffWeekScores.get(week)
+        const clampedWeek = Math.min(18, week)
+        let weekCache = playoffWeekScores.get(clampedWeek)
         if (!weekCache) {
+          while (markovCurrentWeek < clampedWeek) {
+            advanceMarkovInjuriesOneWeek(markovCurrentWeek, model.attritionScale, rng)
+            markovCurrentWeek += 1
+          }
           weekCache = new Map<number, number>()
-          playoffWeekScores.set(week, weekCache)
+          playoffWeekScores.set(clampedWeek, weekCache)
           rollNflTeamShocks(model.teamCorrSd, rng)
         }
         const existing = weekCache.get(rosterId)
         if (existing !== undefined) return existing
-        const clampedWeek = Math.min(18, week)
         const rw = compiledWeeks.get(clampedWeek)?.get(rosterId)
         const score = rw
           ? simulateRosterForWeek(rw, rosterId, model, fullIdioVarFactor, rng, false).starterScore
