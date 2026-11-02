@@ -1,28 +1,44 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 :root {
-  font-family: 'DM Sans', sans-serif;
-  color: #e7e8ea;
-  background: #111315;
+  color-scheme: dark;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #e6eaf0;
+  background: #0b0d10;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --ink: #e7e8ea;
-  --muted: #a0a4aa;
-  --line: #35383d;
-  --paper: #1a1c20;
-  --green: #bd8732;
-  --green-soft: #382e1e;
-  --lime: #f0c566;
+  --bg: #0b0d10;
+  --surface: #12161c;
+  --surface-raised: #181d25;
+  --surface-subtle: #151a22;
+  --ink: #eef1f6;
+  --ink-secondary: #c2c9d4;
+  --muted: #828c9b;
+  --line: #252c37;
+  --line-subtle: #1c222c;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-text: #7cb3ff;
+  --accent-soft: rgba(59, 130, 246, 0.14);
+  --accent-border: rgba(59, 130, 246, 0.3);
+  --playoff: #64748b;
+  --live: #22c55e;
   --mono: 'DM Mono', monospace;
   --display: 'Space Grotesk', sans-serif;
 }
 
 * { box-sizing: border-box; }
-html { min-width: 360px; background: #111315; }
-body { margin: 0; min-width: 360px; min-height: 100vh; background: radial-gradient(ellipse at 86% 0%, #1c1d20 0, transparent 34rem), #111315; }
+html { min-width: 360px; background: var(--bg); }
+body {
+  margin: 0;
+  min-width: 360px;
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--bg);
+}
 button, input { font: inherit; }
 button { color: inherit; }
 a { color: inherit; }
 #root { min-height: 100vh; }
-::selection { color: var(--ink); background: var(--lime); }
+::selection { color: #ffffff; background: rgba(59, 130, 246, 0.45); }
