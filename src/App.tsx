@@ -116,7 +116,6 @@ function App() {
             <section><h3>Pick assignment</h3><p>In every simulation, non-playoff teams are ordered strictly by final Max PF, lowest first, for picks 1–6; record does not order those picks. Playoff finish maps to picks 7–12. Traded picks keep the original franchise's projected slot and show the current owner separately.</p></section>
           </div>
           <p className="model-caveat">The consensus is the average pick frequency across three scenarios: lower-variance projections, balanced projections, and higher-variance projections with a recent-form adjustment. The small range under each percentage shows the lowest-to-highest result among those models; it is a sensitivity range, not a confidence interval. There are 600 season simulations per scenario (1,800 total). Recent form uses only a few past weeks, so its influence is intentionally capped. Sleeper player/injury data is cached for up to 24 hours; Refresh updates the other feeds. Other projection providers or assumptions can still produce different odds.</p>
-          <a className="model-source" href="https://docs.sleeper.com/" target="_blank" rel="noreferrer">SLEEPER API DOCUMENTATION <ArrowUpRight size={13} /></a>
         </div>
       </details>
       <div className="bottom-note">UNOFFICIAL DYNASTY TOOL <span>·</span> LIVE SCORES AND PLAYER PROJECTIONS BY SLEEPER</div>

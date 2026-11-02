@@ -163,7 +163,6 @@ td { color: #c5c7cc; border-color: #2d3035; }
 .model-grid h3 { margin: 0 0 5px; color: #e9c779; font: 600 10px var(--mono); text-transform: uppercase; }
 .model-grid p, .model-caveat { margin: 0; color: #b3b6bc; font-size: 10px; line-height: 1.55; }
 .model-caveat { margin-top: 13px; }
-.model-source { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; color: #e9c779; text-decoration: none; font: 9px var(--mono); }
 
 @media (max-width: 1000px) {
   .app-shell { padding-inline: 28px; }
