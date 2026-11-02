@@ -10,9 +10,16 @@ export interface ProjectedPick {
   pickHolder: string
   pickHolderId: number
   probabilities: number[]
+  probabilityRanges: Array<{ low: number; high: number }>
+  modelNames: string[]
 }
 
-const SIMULATIONS = 1200
+const SIMULATIONS_PER_MODEL = 600
+const MODELS = [
+  { key: 'projection-low-variance', label: 'Projection-led · lower variance', variance: 0.75, formWeight: 0 },
+  { key: 'projection-balanced', label: 'Projection-led · balanced', variance: 1, formWeight: 0 },
+  { key: 'recent-form', label: 'Recent form · higher variance', variance: 1.25, formWeight: 0.25 },
+] as const
 const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0
 
 function score(stats: StatLine | undefined, scoring: Record<string, number>): number {
@@ -134,6 +141,32 @@ function teamMaxPfDeviation(data: LeagueData, rosterId: number, leagueDeviation:
   return Math.min(45, Math.max(8, blendDeviation(history, leagueDeviation * 0.65)))
 }
 
+function recentFormDeltas(data: LeagueData, rosterId: number): { score: number; maxPf: number } {
+  const scoreHistory = data.historicalTeamScores[rosterId] ?? []
+  const maxPfHistory = data.historicalMaxPf[rosterId] ?? []
+  const historicalWeeks = Object.keys(data.historicalScores).map(Number).sort((a, b) => a - b)
+  const start = Math.max(0, historicalWeeks.length - 3)
+  let scoreDelta = 0
+  let maxPfDelta = 0
+  let weightTotal = 0
+  for (let index = start; index < historicalWeeks.length; index += 1) {
+    const week = historicalWeeks[index]
+    const leagueScores = data.historicalScores[week] ?? []
+    const leagueAverageScore = leagueScores.length ? leagueScores.reduce((sum, value) => sum + value, 0) / leagueScores.length : 0
+    const leagueMaxPf = Object.values(data.historicalMaxPf).map((values) => values[index]).filter((value): value is number => typeof value === 'number')
+    const leagueAverageMaxPf = leagueMaxPf.length ? leagueMaxPf.reduce((sum, value) => sum + value, 0) / leagueMaxPf.length : 0
+    const weight = index - start + 1
+    scoreDelta += ((scoreHistory[index] ?? leagueAverageScore) - leagueAverageScore) * weight
+    maxPfDelta += ((maxPfHistory[index] ?? leagueAverageMaxPf) - leagueAverageMaxPf) * weight
+    weightTotal += weight
+  }
+  if (!weightTotal) return { score: 0, maxPf: 0 }
+  return {
+    score: Math.max(-12, Math.min(12, scoreDelta / weightTotal)),
+    maxPf: Math.max(-15, Math.min(15, maxPfDelta / weightTotal)),
+  }
+}
+
 function teamName(data: LeagueData, roster: SleeperRoster): string {
   const user = data.users.find((item) => item.user_id === roster.owner_id)
   return user?.metadata?.team_name || user?.display_name || `Team ${roster.roster_id}`
@@ -154,6 +187,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     roster.roster_id,
     teamMaxPfDeviation(data, roster.roster_id, leagueScoreDeviation),
   ]))
+  const formDeltas = new Map(data.rosters.map((roster) => [roster.roster_id, recentFormDeltas(data, roster.roster_id)]))
   const weeks = new Map<number, Map<number, { score: number; maxPf: number }>>()
   for (let week = data.currentWeek; week <= Math.min(18, playoffStart + 2); week += 1) {
     weeks.set(week, new Map(data.rosters.map((roster) => [roster.roster_id, {
@@ -176,10 +210,13 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     maxPf: maxPf.get(roster.roster_id) ?? 0,
     points: number(roster.settings.fpts) + number(roster.settings.fpts_decimal) / 100,
     picks: Array(count + 1).fill(0) as number[],
+    modelPicks: Object.fromEntries(MODELS.map((model) => [model.key, Array(count + 1).fill(0) as number[]])) as Record<(typeof MODELS)[number]['key'], number[]>,
   }]))
-  const random = randomFor(Number(league.season) * 1000 + data.currentWeek)
+  const baseSeed = Number(league.season) * 1000 + data.currentWeek
 
-  for (let run = 0; run < SIMULATIONS; run += 1) {
+  for (const [modelIndex, model] of MODELS.entries()) {
+    const random = randomFor(baseSeed + modelIndex * 7919)
+    for (let run = 0; run < SIMULATIONS_PER_MODEL; run += 1) {
     const simulatedMaxPf = new Map(data.rosters.map((roster) => [
       roster.roster_id,
       number(roster.settings.ppts) + number(roster.settings.ppts_decimal) / 100,
@@ -195,9 +232,12 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         const noise = week === data.currentWeek ? 0 : normal(random)
         const scoreDeviation = scoreDeviations.get(roster.roster_id) ?? leagueScoreDeviation
         const maxPfDeviation = maxPfDeviations.get(roster.roster_id) ?? leagueScoreDeviation * 0.65
-        const projected = week === data.currentWeek ? mean : Math.max(0, mean + noise * scoreDeviation)
+        const form = formDeltas.get(roster.roster_id) ?? { score: 0, maxPf: 0 }
+        const projectedMean = mean + form.score * model.formWeight
+        const projected = week === data.currentWeek ? mean : Math.max(0, projectedMean + noise * scoreDeviation * model.variance)
         const maxPfMean = weeks.get(week)?.get(roster.roster_id)?.maxPf ?? 0
-        const maxPfForWeek = week === data.currentWeek ? maxPfMean : Math.max(0, maxPfMean + noise * maxPfDeviation)
+        const projectedMaxPfMean = maxPfMean + form.maxPf * model.formWeight
+        const maxPfForWeek = week === data.currentWeek ? maxPfMean : Math.max(0, projectedMaxPfMean + noise * maxPfDeviation * model.variance)
         simulatedMaxPf.set(roster.roster_id, (simulatedMaxPf.get(roster.roster_id) ?? 0) + maxPfForWeek)
         points.set(roster.roster_id, projected)
         records.get(roster.roster_id)!.points += week === data.currentWeek
@@ -241,8 +281,10 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     if (playoff.length === 6) {
       const ids = playoff.map((roster) => roster.roster_id)
       const play = (first: number, second: number, week: number) => {
-        const a = Math.max(0, (weeks.get(week)?.get(first)?.score ?? 0) + normal(random) * (scoreDeviations.get(first) ?? leagueScoreDeviation))
-        const b = Math.max(0, (weeks.get(week)?.get(second)?.score ?? 0) + normal(random) * (scoreDeviations.get(second) ?? leagueScoreDeviation))
+        const firstForm = formDeltas.get(first)?.score ?? 0
+        const secondForm = formDeltas.get(second)?.score ?? 0
+        const a = Math.max(0, (weeks.get(week)?.get(first)?.score ?? 0) + firstForm * model.formWeight + normal(random) * (scoreDeviations.get(first) ?? leagueScoreDeviation) * model.variance)
+        const b = Math.max(0, (weeks.get(week)?.get(second)?.score ?? 0) + secondForm * model.formWeight + normal(random) * (scoreDeviations.get(second) ?? leagueScoreDeviation) * model.variance)
         const winning = a === b ? (random() < 0.5 ? first : second) : a > b ? first : second
         return { winner: winning, loser: winning === first ? second : first }
       }
@@ -258,10 +300,16 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     playoffOrder.forEach((rosterId, index) => {
       const team = stats.get(rosterId)!
       team.picks[count - index] += 1
+      team.modelPicks[model.key][count - index] += 1
     })
     const eliminated = data.rosters.filter((roster) => !playoff.some((seed) => seed.roster_id === roster.roster_id))
       .sort((a, b) => (simulatedMaxPf.get(a.roster_id) ?? 0) - (simulatedMaxPf.get(b.roster_id) ?? 0))
-    eliminated.forEach((roster, index) => { stats.get(roster.roster_id)!.picks[index + 1] += 1 })
+    eliminated.forEach((roster, index) => {
+      const team = stats.get(roster.roster_id)!
+      team.picks[index + 1] += 1
+      team.modelPicks[model.key][index + 1] += 1
+    })
+    }
   }
 
   const pickOwners = new Map<number, number>()
@@ -269,7 +317,12 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     if (Number(pick.season) === Number(league.season) + 1 && pick.round === 1) pickOwners.set(pick.roster_id, pick.owner_id)
   }
   return [...stats.values()].map((team) => {
-    const probabilities = team.picks.slice(1).map((value) => value / SIMULATIONS)
+    const modelProbabilities = MODELS.map((model) => team.modelPicks[model.key].slice(1).map((value) => value / SIMULATIONS_PER_MODEL))
+    const probabilities = team.picks.slice(1).map((value) => value / (SIMULATIONS_PER_MODEL * MODELS.length))
+    const probabilityRanges = probabilities.map((_, index) => ({
+      low: Math.min(...modelProbabilities.map((model) => model[index] ?? 0)),
+      high: Math.max(...modelProbabilities.map((model) => model[index] ?? 0)),
+    }))
     const pick = probabilities.reduce((best, chance, index) => chance > probabilities[best - 1] ? index + 1 : best, 1)
     const pickHolderId = pickOwners.get(team.roster.roster_id) ?? team.roster.roster_id
     const holder = data.rosters.find((roster) => roster.roster_id === pickHolderId)
@@ -286,6 +339,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       pickHolder: holder ? teamName(data, holder) : `Team ${pickHolderId}`,
       pickHolderId,
       probabilities,
+      probabilityRanges,
+      modelNames: MODELS.map((model) => model.label),
     }
   }).sort((a, b) => a.pick - b.pick)
 }
