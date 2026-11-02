@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownUp, ArrowUpRight, Calculator, Check, ChevronDown, CircleAlert, Clock3, Code2, ExternalLink, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
+import { ArrowDownUp, ArrowUpRight, Calculator, Check, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
 import { projectDraftOrder } from './projection'
 import { loadLeagueData, type LeagueData } from './sleeper'
 import './App.css'
@@ -419,22 +419,6 @@ function App() {
                 <strong>Traded Asset Ownership:</strong> Traded draft capital is tracked live via Sleeper. If Franchise A owns Franchise B's pick, the selection slot is governed strictly by Franchise B's mathematical finish, while ownership rights are assigned to Franchise A on the board.
               </p>
             </div>
-          </div>
-
-          <div className="algo-source-banner">
-            <div className="algo-source-text">
-              <Code2 size={16} className="algo-icon" />
-              <span>Curious to inspect the underlying math algorithm in code? View the open-source implementation:</span>
-            </div>
-            <a
-              href="https://github.com/deep1130/draft-ledger/blob/main/src/projection.ts"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="algo-source-btn"
-            >
-              <span>src/projection.ts on GitHub</span>
-              <ExternalLink size={12} />
-            </a>
           </div>
 
           <details className="math-deep-dive">

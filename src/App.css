@@ -136,49 +136,6 @@ th:nth-last-child(-n+3) { text-align: right; }
 .model-engine-item { font-size: 11px; line-height: 1.5; color: var(--muted); }
 .model-engine-item strong { color: var(--ink); font-family: var(--mono); font-size: 10px; display: block; margin-bottom: 2px; }
 
-/* Algorithm Source Banner */
-.algo-source-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 18px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-}
-.algo-source-text {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--ink-secondary);
-  font-size: 12px;
-}
-.algo-icon {
-  color: var(--lottery-text);
-  flex-shrink: 0;
-}
-.algo-source-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: var(--control);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  text-decoration: none;
-  font: 500 11px var(--mono);
-  transition: all .15s ease;
-  white-space: nowrap;
-}
-.algo-source-btn:hover {
-  background: var(--control-hover);
-  border-color: var(--lottery-border);
-  color: var(--lottery-text);
-}
-
 /* College-level Math Deep Dive */
 .math-deep-dive {
   margin-top: 18px;
@@ -396,7 +353,6 @@ th:nth-last-child(-n+3) { text-align: right; }
   .model-engine-item { font-size: 10.5px; }
   .math-cards-grid { grid-template-columns: 1fr; gap: 12px; }
   .math-card { padding: 14px 14px; }
-  .algo-source-banner { flex-direction: column; align-items: flex-start; gap: 10px; }
   .math-badge { display: none; }
 }
 

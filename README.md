@@ -52,7 +52,7 @@ Draft Ledger integrates **thirteen independent analytical engines** into a conse
 
 ### College-Level Mathematical Foundations & Algorithm Specifications
 
-For engineers, mathematicians, and fantasy players interested in the formal calculus, probability theory, and discrete optimization algorithms running behind the scenes, the core computational pipeline implements the following specifications (source code: [`src/projection.ts`](https://github.com/deep1130/draft-ledger/blob/main/src/projection.ts)):
+For engineers, mathematicians, and fantasy players interested in the formal calculus, probability theory, and discrete optimization algorithms running behind the scenes, the core computational pipeline implements the following specifications (implemented in `src/projection.ts`):
 
 1. **Continuous Scoring Densities & Milestone Integrals ([Gamma distribution](https://en.wikipedia.org/wiki/Gamma_distribution)):**
    $$f(x; k, \theta) = \frac{1}{\Gamma(k)\theta^k} x^{k-1} e^{-x/\theta}, \quad \mathbb{E}[X] = k\theta = \mu, \quad \mathrm{Var}(X) = \theta^2 \mu$$
