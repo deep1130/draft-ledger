@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownUp, ArrowUpRight, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, ShieldCheck, Trophy } from 'lucide-react'
+import { ArrowDownUp, ArrowUpRight, Check, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
 import { projectDraftOrder } from './projection'
 import { loadLeagueData, type LeagueData } from './sleeper'
 import './App.css'
@@ -9,27 +9,48 @@ type View = 'order' | 'assets'
 const formatNumber = (value: number) => value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
 
+function getInitialLeagueId(): string {
+  if (typeof window !== 'undefined') {
+    const fromQuery = new URLSearchParams(window.location.search).get('league')
+    if (fromQuery && fromQuery.trim()) return fromQuery.trim()
+    const fromHash = window.location.hash.replace(/^#\/?/, '').trim()
+    if (fromHash && /^\d+$/.test(fromHash)) return fromHash
+    const saved = localStorage.getItem('last_league_id')
+    if (saved && saved.trim()) return saved.trim()
+  }
+  return DEFAULT_LEAGUE_ID
+}
+
 function teamName(data: LeagueData, roster: LeagueData['rosters'][number]): string {
   const owner = data.users.find((user) => user.user_id === roster.owner_id)
   return owner?.metadata?.team_name || owner?.display_name || `Team ${roster.roster_id}`
 }
 
 function App() {
-  const [leagueId, setLeagueId] = useState(DEFAULT_LEAGUE_ID)
+  const [leagueId, setLeagueId] = useState(getInitialLeagueId)
   const [data, setData] = useState<LeagueData | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState<View>('order')
   const [search, setSearch] = useState('')
   const [lastUpdated, setLastUpdated] = useState<number | null>(null)
+  const [copied, setCopied] = useState(false)
 
-  async function refresh() {
+  async function refresh(targetId?: string) {
+    const activeId = (targetId ?? leagueId).trim()
+    if (!activeId) return
     setBusy(true)
     setError('')
     try {
-      const next = await loadLeagueData(leagueId.trim())
+      const next = await loadLeagueData(activeId)
       setData(next)
       setLastUpdated(next.lastUpdated)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('last_league_id', activeId)
+        const url = new URL(window.location.href)
+        url.searchParams.set('league', activeId)
+        window.history.replaceState({}, '', url.toString())
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not load league data.')
     } finally {
@@ -37,19 +58,24 @@ function App() {
     }
   }
 
+  async function copyShareUrl() {
+    if (typeof window === 'undefined') return
+    const activeId = leagueId.trim() || DEFAULT_LEAGUE_ID
+    const url = new URL(window.location.href)
+    url.searchParams.set('league', activeId)
+    const shareUrl = url.toString()
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback prompt if clipboard API is restricted
+      window.prompt('Copy shareable league URL:', shareUrl)
+    }
+  }
+
   useEffect(() => {
-    let active = true
-    void loadLeagueData(DEFAULT_LEAGUE_ID).then((next) => {
-      if (!active) return
-      setData(next)
-      setLastUpdated(next.lastUpdated)
-      setError('')
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : 'Could not load league data.')
-    }).finally(() => {
-      if (active) setBusy(false)
-    })
-    return () => { active = false }
+    void refresh(getInitialLeagueId())
   }, [])
 
   const picks = useMemo(() => (data ? projectDraftOrder(data) : []), [data])
@@ -70,7 +96,41 @@ function App() {
 
       <section className="intro" id="top">
         <div><p className="eyebrow">PICK POSITION INTELLIGENCE <span>·</span> WEEK {currentWeek || '--'}</p><h1>Draft order, <em>in motion.</em></h1><p className="intro-copy">A live read on where the rookie picks are headed, shaped by every point, bye and roster move.</p></div>
-        <div className="league-control"><label htmlFor="league-id">SLEEPER LEAGUE ID</label><div className="league-input-row"><input id="league-id" value={leagueId} onChange={(event) => setLeagueId(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh() }} /><button type="button" className="refresh-button" onClick={() => void refresh()} disabled={busy || !leagueId.trim()} title="Refresh live data"><RefreshCw size={15} className={busy ? 'spin' : ''} /><span>{busy ? 'UPDATING' : 'REFRESH'}</span></button></div><div className="refresh-meta"><Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'FETCHES ON LOAD · NO POLLING'}</div></div>
+        <div className="league-control">
+          <label htmlFor="league-id">SLEEPER LEAGUE ID</label>
+          <div className="league-input-row">
+            <input
+              id="league-id"
+              value={leagueId}
+              onChange={(event) => setLeagueId(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void refresh() }}
+              placeholder="League ID"
+              aria-label="Sleeper League ID"
+            />
+            <button
+              type="button"
+              className={`share-button ${copied ? 'copied' : ''}`}
+              onClick={() => void copyShareUrl()}
+              title="Copy shareable link to this league"
+            >
+              {copied ? <Check size={13} /> : <Share2 size={13} />}
+              <span>{copied ? 'COPIED' : 'SHARE'}</span>
+            </button>
+            <button
+              type="button"
+              className="refresh-button"
+              onClick={() => void refresh()}
+              disabled={busy || !leagueId.trim()}
+              title="Refresh live data"
+            >
+              <RefreshCw size={14} className={busy ? 'spin' : ''} />
+              <span>{busy ? 'UPDATING' : 'REFRESH'}</span>
+            </button>
+          </div>
+          <div className="refresh-meta">
+            <Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'FETCHES ON LOAD · NO POLLING'}
+          </div>
+        </div>
       </section>
 
       {error && <div className="error-banner"><CircleAlert size={16} /><span>Live data unavailable: {error}</span><button type="button" onClick={() => void refresh()}>Retry</button></div>}

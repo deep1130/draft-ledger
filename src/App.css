@@ -16,12 +16,15 @@ h1 { margin: 14px 0 8px; color: var(--ink); font: 600 43px/1.04 var(--display); 
 h1 em { color: var(--lottery-text); font-style: normal; }
 .intro-copy { max-width: 540px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
 
-.league-control { width: 345px; flex: 0 0 345px; }
+.league-control { width: 395px; flex: 0 0 395px; }
 .league-control label { display: block; margin-bottom: 8px; }
 .league-input-row { height: 40px; display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
 .league-input-row:focus-within { border-color: rgba(255, 255, 255, 0.28); }
 .league-input-row input { width: 100%; min-width: 0; padding: 0 11px; color: var(--ink); border: 0; outline: 0; background: transparent; font: 12px var(--mono); }
-.refresh-button { min-width: 112px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; border: 0; border-left: 1px solid var(--line); color: var(--ink); background: var(--control); cursor: pointer; font: 500 10px var(--mono); transition: background .15s ease; }
+.share-button { min-width: 82px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 0; border-left: 1px solid var(--line); color: var(--ink-secondary); background: var(--surface-raised); cursor: pointer; font: 500 10px var(--mono); transition: background .15s ease, color .15s ease; }
+.share-button:hover { color: var(--ink); background: var(--control); }
+.share-button.copied { color: var(--playoff-text); background: var(--playoff-soft); }
+.refresh-button { min-width: 106px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 0; border-left: 1px solid var(--line); color: var(--ink); background: var(--control); cursor: pointer; font: 500 10px var(--mono); transition: background .15s ease; }
 .refresh-button:hover:not(:disabled) { background: var(--control-hover); }
 .refresh-button:disabled { cursor: wait; opacity: .7; }
 .refresh-meta { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font: 9px var(--mono); }
