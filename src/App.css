@@ -78,7 +78,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .odds-lottery b { color: var(--lottery-text); }
 
 .numeric-cell { text-align: right; color: var(--ink); font: 12px var(--mono); }
-th:nth-last-child(-n+2) { text-align: right; }
+th:nth-last-child(-n+3) { text-align: right; }
+.xpick-cell { text-align: right; }
+.xpick-pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font: 600 11px var(--mono); color: var(--playoff-text); background: var(--playoff-soft); border: 1px solid var(--playoff-border); }
+.xpick-pill.xpick-lottery { color: var(--lottery-text); background: var(--lottery-soft); border-color: var(--lottery-border); }
 .empty-cell { height: 120px; color: var(--muted); text-align: center; }
 .empty-cell svg { vertical-align: middle; margin-right: 8px; }
 .owned-picks-row td { height: 42px; color: var(--muted); background: var(--surface-subtle); white-space: normal; font-size: 10px; }

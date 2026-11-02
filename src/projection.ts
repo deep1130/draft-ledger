@@ -16,6 +16,7 @@ export interface ProjectedPick {
   maxPf: number
   currentMaxPf: number
   pick: number
+  expectedPick: number
   pickHolder: string
   pickHolderId: number
   probabilities: number[]
@@ -1622,6 +1623,5 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   })
 
   return assignBijectiveDraftPicks(rawTeams, nonPlayoffCount)
-    .map(({ expectedPick: _expectedPick, ...projectedPick }) => projectedPick)
     .sort((a, b) => a.pick - b.pick)
 }
