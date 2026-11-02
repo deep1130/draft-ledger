@@ -48,7 +48,42 @@ Draft Ledger combines **thirteen independent simulation engines** into a consens
 - **Picks 01–06 (Lottery Tier):** Awarded to the non-playoff teams, ordered strictly by lowest regular-season Max PF. The lowest-scoring non-playoff team receives the #1 overall pick.
 - **Picks 07–12 (Playoff Tier):** Awarded to playoff qualifiers, ordered in reverse of regular-season finish (the last playoff seed receives Pick 07; the #1 seed receives Pick 12).
 - **The Playoff Bubble (Pick 06 vs. Pick 07):** A bubble team that goes on a late-season hot streak usually wins enough matchups (and weekly median games) to sneak into the playoffs, locking them into Pick 07. Landing Pick 06 requires leading all non-playoff teams in Max PF while still missing the postseason entirely—a rare needle to thread.
-- **Expected Pick (`xPick`):** The probability-weighted average draft position (&Sigma; [Pick Number &times; Probability]). An xPick of `1.4` indicates a near-certain top-2 pick, while `6.8` indicates a team hovering right on the playoff bubble.
+- **Expected Pick (`xPick`):** The probability-weighted average draft position ([Expected Value](https://en.wikipedia.org/wiki/Expected_value): $\sum [j \cdot P(\text{Pick} = j)]$). An xPick of `1.4` indicates a near-certain top-2 pick, while `6.8` indicates a team hovering right on the playoff bubble.
+
+### College-Level Mathematical Foundations & Algorithm Specifications
+
+For engineers, mathematicians, and fantasy players interested in the formal calculus, probability theory, and discrete optimization algorithms running behind the scenes, the core computational pipeline implements the following specifications (source code: [`src/projection.ts`](https://github.com/deep1130/draft-ledger/blob/main/src/projection.ts)):
+
+1. **Continuous Scoring Densities & Milestone Integrals ([Gamma distribution](https://en.wikipedia.org/wiki/Gamma_distribution)):**
+   $$f(x; k, \theta) = \frac{1}{\Gamma(k)\theta^k} x^{k-1} e^{-x/\theta}, \quad \mathbb{E}[X] = k\theta = \mu, \quad \mathrm{Var}(X) = \theta^2 \mu$$
+   Positional dispersion scales with mean ($\sigma = \theta\sqrt{\mu}$), and yardage milestone bonuses evaluate upper tail definite integrals: $P(X \ge T) = \int_T^\infty f(x) \, dx = 1 - \frac{\gamma(k, T/\theta)}{\Gamma(k)}$.
+
+2. **Hindsight Lineup Optimization ([Transversal Matroid](https://en.wikipedia.org/wiki/Transversal_matroid)):**
+   $$\max_{I \in \mathcal{I}} \sum_{e \in I} w(e), \quad \text{where } \mathcal{I} = \{ I \subseteq V_{\text{players}} : I \text{ matchable in bipartite graph } G \}$$
+   Max PF evaluates optimal lineups in 20/20 hindsight over a transversal matroid in $\mathcal{O}(|E| \log |E|)$ greedy time. Benching stars cannot depress a team's Max PF.
+
+3. **Closed-Form Matchup Integrals ([Error function (erf)](https://en.wikipedia.org/wiki/Error_function) & [Normal CDF](https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function)):**
+   $$P(S_A > S_B) = \int_0^\infty \frac{1}{\sigma_D \sqrt{2\pi}} e^{-\frac{(z - \mu_D)^2}{2\sigma_D^2}} dz = \frac{1}{2} \left[ 1 + \mathrm{erf}\left( \frac{\mu_D}{\sigma_D \sqrt{2}} \right) \right]$$
+   where $\mu_D = \mu_A - \mu_B$ and $\sigma_D^2 = \sigma_A^2 + \sigma_B^2 - 2\mathrm{Cov}(S_A, S_B)$, calculating zero-noise win probabilities for both head-to-head and weekly median games.
+
+4. **Exact Win Distributions ([Poisson Binomial Distribution](https://en.wikipedia.org/wiki/Poisson_binomial_distribution)):**
+   $$G_W(z) = \prod_{i=1}^N \big((1 - p_i) + p_i z\big) = \sum_{k=0}^N P(W = k) z^k$$
+   Evaluated via iterative $\mathcal{O}(N^2)$ polynomial convolution for exact playoff and median win distributions without simulation sampling variance.
+
+5. **Injury Cascades as Stochastic Transitions ([Markov Chain](https://en.wikipedia.org/wiki/Markov_chain)):**
+   $$\mathbf{s}_{t+1} = \mathbf{s}_t \mathbf{P}, \quad \mathbf{P} = \begin{pmatrix} 1 - \lambda_{\text{pos}} & \lambda_{\text{pos}} \\ \mu_{\text{rec}} & 1 - \mu_{\text{rec}} \end{pmatrix}$$
+   Position-specific hazards ($\lambda_{\text{RB}} \approx 4.6\%$, $\lambda_{\text{TE}} \approx 3.6\%$, $\lambda_{\text{WR}} \approx 3.3\%$, $\lambda_{\text{QB}} \approx 2.2\%$) model multi-week injury and recovery spells across simulated seasons.
+
+6. **Doubly-Stochastic Matrix Normalization ([Sinkhorn's Theorem](https://en.wikipedia.org/wiki/Sinkhorn%27s_theorem)):**
+   $$\lim_{k \to \infty} \mathbf{D}_1^{(k)} \mathbf{M} \mathbf{D}_2^{(k)} = \mathbf{P}^*, \quad \sum_{j=1}^M P^*_{ij} = 1 \; (\forall i), \quad \sum_{i=1}^M P^*_{ij} = 1 \; (\forall j)$$
+   Alternating diagonal scaling projects the 13-engine probability matrix onto the [Birkhoff polytope](https://en.wikipedia.org/wiki/Doubly_stochastic_matrix), guaranteeing all rows and columns sum to exactly 100%.
+
+7. **Expected Pick Capital ([Expected Value](https://en.wikipedia.org/wiki/Expected_value)):**
+   $$\mathbb{E}[\text{Pick}_i] = \sum_{j=1}^M j \cdot P(\text{Pick}_i = j)$$
+
+8. **Projection Calibration ([Empirical Bayes](https://en.wikipedia.org/wiki/Empirical_Bayes_method) & [Monte Carlo](https://en.wikipedia.org/wiki/Monte_Carlo_method)):**
+   $$\hat{\mu}_i = B_i \bar{x}_i + (1 - B_i) \mu_{0, i}, \quad B_i = \frac{\tau^2}{\tau^2 + \sigma_i^2 / n_i}$$
+   Shrinkage pulls small samples toward baseline priors, followed by 6,000 full-season Monte Carlo simulation trials.
 
 These are estimates, not official league draft positions. Sleeper league settings and scoring data are the source of truth; public APIs may change or be temporarily unavailable.
 

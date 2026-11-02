@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownUp, ArrowUpRight, Check, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
+import { ArrowDownUp, ArrowUpRight, Calculator, Check, ChevronDown, CircleAlert, Clock3, Code2, ExternalLink, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
 import { projectDraftOrder } from './projection'
 import { loadLeagueData, type LeagueData } from './sleeper'
 import './App.css'
@@ -258,7 +258,7 @@ function App() {
                 In dynasty leagues, rookie draft order for non-playoff teams is decided by <strong>Max Points For (Max PF)</strong>, not win-loss record.
               </p>
               <p>
-                Every week, the system looks at every single player on your roster—including your bench and taxi squad—and calculates the highest score you could have possibly posted in 20/20 hindsight. Benching your studs to intentionally lose matchups will never lower your Max PF or help your draft position.
+                Every week, the system looks at every single player on your roster—including your bench and taxi squad—and calculates the highest score you could have possibly posted in 20/20 hindsight (using <a href="https://en.wikipedia.org/wiki/Transversal_matroid" target="_blank" rel="noopener noreferrer">transversal matroid matching</a>). Benching your studs to intentionally lose matchups will never lower your Max PF or help your draft position.
               </p>
             </div>
 
@@ -359,11 +359,11 @@ function App() {
                 </div>
                 <div className="model-engine-item">
                   <strong>13. Pure Matchup Math:</strong>
-                  Calculates exact mathematical win probabilities for every matchup and median game without simulation randomness.
+                  Calculates exact mathematical win probabilities for every matchup and median game without simulation randomness using <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer">Poisson-Binomial distributions</a> and <a href="https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function" target="_blank" rel="noopener noreferrer">Gaussian integrals</a>.
                 </div>
               </div>
               <p style={{ marginTop: '10px' }}>
-                <strong>How to Read the Pick Chips:</strong> The large percentage on each pick chip is the <strong>consensus probability</strong> across all 13 engines (perfectly balanced so every pick slot and every team sums to exactly 100%). The small range underneath (e.g. <code>75%–87%</code>) is the <strong>range of outcomes</strong>—the lowest and highest probability found across the 13 different simulation scenarios.
+                <strong>How to Read the Pick Chips:</strong> The large percentage on each pick chip is the <strong>consensus probability</strong> across all 13 engines (balanced via <a href="https://en.wikipedia.org/wiki/Sinkhorn%27s_theorem" target="_blank" rel="noopener noreferrer">Sinkhorn-Knopp matrix scaling</a> so every pick slot and every team sums to exactly 100%). The small range underneath (e.g. <code>75%–87%</code>) is the <strong>range of outcomes</strong>—the lowest and highest probability found across the 13 different simulation scenarios.
               </p>
             </div>
 
@@ -373,7 +373,7 @@ function App() {
                 <h4>6. Bench Depth &amp; Injury Survival</h4>
               </div>
               <p>
-                Real fantasy seasons are decided by injuries. In our simulations, players face realistic injury odds based on actual NFL data: <strong>Running Backs (~4.6%)</strong>, <strong>Tight Ends (~3.6%)</strong>, <strong>Wide Receivers (~3.3%)</strong>, and <strong>Quarterbacks (~2.2%)</strong> per game, with existing injuries taking realistic time to heal.
+                Real fantasy seasons are decided by injuries. In our simulations, players face realistic injury odds governed by position-calibrated <a href="https://en.wikipedia.org/wiki/Markov_chain" target="_blank" rel="noopener noreferrer">Markov chains</a>: <strong>Running Backs (~4.6%)</strong>, <strong>Tight Ends (~3.6%)</strong>, <strong>Wide Receivers (~3.3%)</strong>, and <strong>Quarterbacks (~2.2%)</strong> per game, with existing injuries taking realistic time to heal.
               </p>
               <p>
                 When a starter is sidelined, your highest-scoring bench player immediately steps up in both weekly matchups and Max PF calculations.
@@ -407,13 +407,202 @@ function App() {
                 <h4>{data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? '8. Expected Pick (xPick) & Traded Picks' : '7. Expected Pick (xPick) & Traded Picks'}</h4>
               </div>
               <p>
-                <strong>Expected Pick (xPick):</strong> Think of xPick as a team's single "average draft slot." For example, an xPick of <code>1.4</code> means a team is almost guaranteed the 1st or 2nd pick. An xPick of <code>6.8</code> means they are hovering right on the playoff bubble between Pick {String(nonPlayoffCount).padStart(2, '0')} and Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.
+                <strong>Expected Pick (xPick):</strong> Think of xPick as a team's single "average draft slot"—the discrete <a href="https://en.wikipedia.org/wiki/Expected_value" target="_blank" rel="noopener noreferrer">Expected Value</a> of their draft position. For example, an xPick of <code>1.4</code> means a team is almost guaranteed the 1st or 2nd pick. An xPick of <code>6.8</code> means they are hovering right on the playoff bubble between Pick {String(nonPlayoffCount).padStart(2, '0')} and Pick {String(nonPlayoffCount + 1).padStart(2, '0')}.
               </p>
               <p>
                 <strong>Traded Pick Tracking:</strong> All draft pick trades are pulled live from Sleeper. If Team A traded away their 1st-round pick to Team B, the draft slot is decided by where Team A finishes, but ownership of the pick is awarded to Team B on the board.
               </p>
             </div>
           </div>
+
+          <div className="algo-source-banner">
+            <div className="algo-source-text">
+              <Code2 size={16} className="algo-icon" />
+              <span>Curious to inspect the underlying math algorithm in code? View the open-source implementation:</span>
+            </div>
+            <a
+              href="https://github.com/deep1130/draft-ledger/blob/main/src/projection.ts"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="algo-source-btn"
+            >
+              <span>src/projection.ts on GitHub</span>
+              <ExternalLink size={12} />
+            </a>
+          </div>
+
+          <details className="math-deep-dive">
+            <summary>
+              <span className="method-icon math-method-icon"><Calculator size={16} /></span>
+              <div className="model-heading">
+                <span className="math-tag">TECHNICAL DEEP DIVE</span>
+                <strong>College-Level Math &amp; Algorithm Reference (Calculus &amp; Linear Algebra)</strong>
+              </div>
+              <span className="math-badge">Calculus &amp; Proofs</span>
+              <ChevronDown className="model-chevron" size={16} />
+            </summary>
+            <div className="math-deep-dive-body">
+              <p className="math-intro-p">
+                For engineers, mathematicians, and fantasy players interested in the rigorous calculus, probability theory, and discrete optimization algorithms running behind the scenes, here is the formal mathematical specification with links to foundational literature:
+              </p>
+
+              <div className="math-cards-grid">
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">CALCULUS &amp; PROBABILITY</span>
+                    <h4>1. Continuous Scoring Densities &amp; Milestone Integrals</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`f(x; k, θ) = (1 / [Γ(k) θ^k]) * x^(k-1) * e^(-x/θ)
+E[X] = ∫₀^∞ x f(x) dx = kθ = μ
+Var(X) = kθ² = θ²μ   (σ = θ√μ)
+P(X ≥ T) = ∫_T^∞ f(x) dx = 1 - γ(k, T/θ) / Γ(k)`}
+                  </div>
+                  <p>
+                    Weekly player fantasy scoring X is modeled as a continuous random variable following a Gamma density function. Rather than assuming constant variance, positional dispersion scales as σ = θ√μ, reflecting that high-volume starters carry wider absolute point spreads. Yardage milestone bonuses (e.g. 100-yard rushing or 300-yard passing thresholds) are evaluated via improper definite integrals over upper tail thresholds.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Gamma_distribution" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Gamma distribution</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">DISCRETE COMBINATORICS</span>
+                    <h4>2. Greedy Transversal Matroid Matching (Max PF)</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`max_{I ∈ ℐ} ∑_{e ∈ I} w(e)
+where ℐ = { I ⊆ V_players : I matchable in bipartite graph G }
+Greedy matroid optimality: O(|E| log |E|)`}
+                  </div>
+                  <p>
+                    Dynasty non-playoff draft order uses Max Points For (Max PF) to prevent tanking. Evaluating valid starter lineups over position eligibility slots forms a bipartite system. Because the family of matchable subsets forms a transversal matroid satisfying the Rado-Edmonds exchange property, the globally optimal hindsight lineup is solved in O(|E| log |E|) greedy time. Benching stars cannot depress a team's Max PF.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Transversal_matroid" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Transversal matroid</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">MULTIVARIABLE CALCULUS</span>
+                    <h4>3. Gaussian Cumulative Matchup Integrals</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`D = S_A - S_B  ~  N(μ_D, σ_D²)
+μ_D = μ_A - μ_B,   σ_D² = σ_A² + σ_B² - 2Cov(S_A, S_B)
+P(S_A > S_B) = ∫₀^∞ (1 / [σ_D √(2π)]) e^(-(z - μ_D)² / (2σ_D²)) dz
+             = 1/2 [ 1 + erf( μ_D / [σ_D √2] ) ]`}
+                  </div>
+                  <p>
+                    In Engine 13, two opposing teams with starter score distributions S_A and S_B yield a score difference D = S_A - S_B. The exact head-to-head win probability is the double integral of the joint Gaussian density over the positive half-space, evaluated in closed form using the Gauss error function erf(z) with zero sampling noise.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Error_function" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Error function (erf) &amp; Normal CDF</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">GENERATING FUNCTIONS</span>
+                    <h4>4. Exact Win Convolutions (Poisson-Binomial)</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`G_W(z) = ∏_{i=1}^N [ (1 - p_i) + p_i z ] = ∑_{k=0}^N P(W = k) z^k
+Discrete recursion:
+P_m(k) = P_{m-1}(k) * (1 - p_m) + P_{m-1}(k - 1) * p_m`}
+                  </div>
+                  <p>
+                    Over N remaining regular season weeks with heterogeneous win probabilities {'{'}p_1, ..., p_N{'}'}, total wins W follow a Poisson-Binomial distribution. Rather than approximating via standard binomial models (which falsely assume identical odds), the exact probability mass function is calculated by polynomial convolution in O(N²) time.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Poisson binomial distribution</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">STOCHASTIC PROCESSES</span>
+                    <h4>5. Markov Chain Health Transitions</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`s_{t+1} = s_t * P
+P = [ [ 1 - λ_pos,    λ_pos   ]
+      [  μ_rec,     1 - μ_rec ] ]
+λ_RB ≈ 4.6%,  λ_TE ≈ 3.6%,  λ_WR ≈ 3.3%,  λ_QB ≈ 2.2%`}
+                  </div>
+                  <p>
+                    Weekly player availability follows a discrete-time Markov chain with transition matrix P. New weekly hazard rates λ are position-calibrated from historical NFL snap data, while recovery parameter μ models multi-week recovery half-lives across simulated seasons to test roster depth and bench insulation.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Markov_chain" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Markov chain</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">LINEAR ALGEBRA</span>
+                    <h4>6. Sinkhorn-Knopp Doubly-Stochastic Scaling</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`lim_{k → ∞} D_1^(k) M D_2^(k) = P*
+subject to:
+∑_{j=1}^M P*_{ij} = 1  (∀ i),     ∑_{i=1}^M P*_{ij} = 1  (∀ j)`}
+                  </div>
+                  <p>
+                    Ensemble averaging across 13 engines produces a raw probability matrix M. Because every team must be assigned exactly one pick slot and every pick slot must belong to exactly one team, M must lie on the Birkhoff polytope. Alternating diagonal scaling converges linearly to a unique doubly-stochastic matrix P*, ensuring all pick odds sum to exactly 100%.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Sinkhorn%27s_theorem" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Sinkhorn's theorem</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">PROBABILITY THEORY</span>
+                    <h4>7. Expected Value (xPick) &amp; Sensitivity Bounds</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`E[Pick_i] = ∑_{j=1}^M j * P(Pick_i = j)
+Spread(i, j) = [ min_{m ∈ ℳ} P_m(i, j),   max_{m ∈ ℳ} P_m(i, j) ]`}
+                  </div>
+                  <p>
+                    The Expected Pick (xPick) calculates the discrete expected value (first statistical moment) of the pick distribution, providing a continuous draft capital metric. The sensitivity range computes the infimum and supremum probabilities across the 13 independent engine hypotheses ℳ, bounding model uncertainty.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Expected_value" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Expected value</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+
+                <div className="math-card">
+                  <div className="math-card-header">
+                    <span className="math-card-tag">ESTIMATION THEORY</span>
+                    <h4>8. Empirical Bayes &amp; Monte Carlo Trials</h4>
+                  </div>
+                  <div className="math-formula-box">
+{`μ̂_i = B_i * x̄_i + (1 - B_i) * μ_{0, i}
+B_i = τ² / [ τ² + σ_i² / n_i ]
+P(Pick = j) ≈ (1 / K) ∑_{k=1}^K I(Pick^(k) = j),   K = 6,000`}
+                  </div>
+                  <p>
+                    Player baseline means apply Empirical Bayes shrinkage, pulling small in-season sample averages toward projected priors to prevent overfitting early anomalies. Twelve Monte Carlo engines then simulate 6,000 complete remaining seasons with persistent talent and offensive shocks.
+                  </p>
+                  <a href="https://en.wikipedia.org/wiki/Empirical_Bayes_method" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
+                    <span>Read Wikipedia: Empirical Bayes method</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
       </details>
       <div className="bottom-note">UNOFFICIAL DYNASTY TOOL <span>·</span> LIVE SCORES AND PLAYER PROJECTIONS BY SLEEPER</div>
