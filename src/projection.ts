@@ -5,7 +5,7 @@ export interface ProjectedPick {
   name: string
   record: string
   maxPf: number
-  seasonPoints: number
+  currentMaxPf: number
   pick: number
   pickHolder: string
   pickHolderId: number
@@ -378,7 +378,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       name: team.name,
       record: ties ? `${wins}-${losses}-${ties}` : `${wins}-${losses}`,
       maxPf: team.maxPf,
-      seasonPoints: team.points,
+      currentMaxPf: number(team.roster.settings.ppts) + number(team.roster.settings.ppts_decimal) / 100,
       pick,
       pickHolder: holder ? teamName(data, holder) : `Team ${pickHolderId}`,
       pickHolderId,

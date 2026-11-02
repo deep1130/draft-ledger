@@ -220,7 +220,7 @@ td { color: #c5c7cc; border-color: #2d3035; }
   .table-wrap tr.lottery-row td:nth-child(6), .table-wrap tr.playoff-row td:nth-child(6) { grid-column: 2; grid-row: 5; text-align: left; }
   .table-wrap tr.lottery-row td:nth-child(7), .table-wrap tr.playoff-row td:nth-child(7) { grid-column: 3; grid-row: 5; }
   .table-wrap tr.lottery-row td:nth-child(6)::before, .table-wrap tr.playoff-row td:nth-child(6)::before { content: 'PROJECTED MAX PF'; display: block; margin-bottom: 2px; color: #92969d; font: 8px var(--mono); }
-  .table-wrap tr.lottery-row td:nth-child(7)::before, .table-wrap tr.playoff-row td:nth-child(7)::before { content: 'PF'; display: block; margin-bottom: 2px; color: #92969d; font: 8px var(--mono); }
+  .table-wrap tr.lottery-row td:nth-child(7)::before, .table-wrap tr.playoff-row td:nth-child(7)::before { content: 'CURRENT MAX PF'; display: block; margin-bottom: 2px; color: #92969d; font: 8px var(--mono); }
   .table-wrap tbody tr.asset-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding: 11px; border-bottom: 1px solid #2d3035; background: #17191c; }
   .table-wrap tr.asset-row td { height: auto; min-width: 0; padding: 3px 0; border: 0; white-space: normal; overflow-wrap: anywhere; }
   .table-wrap tr.asset-row td::before { display: block; margin-bottom: 3px; color: #92969d; font: 8px var(--mono); }
