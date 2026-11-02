@@ -19,29 +19,36 @@ Sleeper's NFL player directory is several megabytes and its documentation recomm
 
 The current and remaining weekly player projections come from Sleeper's public projection endpoint and are converted with the league's exact scoring settings (including TE-premium reception bonuses and simulated yardage/completion milestone bonuses). Current matchup/player scores come from Sleeper. ESPN's public scoreboard supplies live game progress (normalized across ESPN/Sleeper NFL team codes) and week-specific bye teams. Availability follows a season-long Markov injury process: current IR/Out/Doubtful/Questionable tags draw multi-week absence spells, and healthy players can suffer new position-specific injuries each simulated week that persist into later weeks. Past wins, losses, points for, and Max Points For start from Sleeper's official totals through `last_scored_leg` so mid-week scores are never double-counted.
 
-## Projection model
+## How draft pick odds are calculated
 
-The app blends thirteen independent projection engines into a consensus ensemble: twelve player-level Monte Carlo models (500 full-season simulations each, 6,000 total) alongside a deterministic closed-form analytical engine:
-1. **Player-level Gamma (Monte Carlo)**: Right-skewed compound-process player scoring calibrated by position (`SD = θ√μ`) with NFL team offensive stack correlation.
-2. **Heavy-tail boom/bust (Monte Carlo)**: Shifted log-normal player outcomes with elevated upper-tail kurtosis and in-game early-exit risk.
-3. **Empirical league bootstrap (Monte Carlo)**: Non-parametric resampling of multiplicative player game ratios (`actual / playerMean`) pooled from completed weeks of the league.
-4. **Bayesian form & lineup efficiency (Monte Carlo)**: Stronger empirical-Bayes weight on each player's recency-weighted actual production versus Sleeper projections, plus manager starter capture efficiency.
-5. **Elevated injury attrition (1.5x) (Monte Carlo)**: Elevated 1.5x Markov injury hazard stress-testing bench depth and roster durability through the season.
-6. **Severe injury shock & crisis (2.0x) (Monte Carlo)**: Elevated 2.0x Markov hazard simulating severe absence cascades and acute roster fragility where depth failure is magnified.
-7. **Game-script shootout & stacking (Monte Carlo)**: Amplified team-stack correlation modeling high-scoring offensive shootouts and game-script volume shifts.
-8. **Dynasty youth & rookie breakout (Monte Carlo)**: Models second-half rookie snap expansion and late-season youth role surges vs aging veteran wear-and-tear.
-9. **Conservative floor & tight median (Monte Carlo)**: Compresses single-game variance to model chalk, low-volatility baseline expectations.
-10. **Dynasty rebuilder vs contender management (Monte Carlo)**: Lineup management disparity modeling contending high-floor optimization vs rebuilder youth evaluation and soft-tank matchup drops.
-11. **Extreme volatility & fat-tail booms (Monte Carlo)**: Power-law upper-tail mixture capturing 45+ point monster boom games alongside floor collapses.
-12. **Starting QB domino & cascade (Monte Carlo)**: Models structural pass-catcher reliance on starting QB health, cascading an efficiency drop to receivers when their primary QB is sidelined.
-13. **Analytical Gaussian convolution (Closed-form)**: Deterministic bivariate normal integration for head-to-head and median games with Poisson-Binomial characteristic convolution to calculate exact win distributions without random sampling noise.
+Draft Ledger combines **thirteen independent simulation engines** into a consensus draft order: twelve player-level Monte Carlo models (500 full-season simulations each, 6,000 total) alongside an exact closed-form mathematical engine:
 
-All models share two calibration layers: player means blend Sleeper's projection with the player's own recency-weighted actual points (empirical-Bayes shrinkage, guarded against healthy players who lost their role), and each simulated season draws **persistent rest-of-season shocks** (player role/talent and NFL offense level) that carry across every remaining week. Without this, weekly noise averages out and close teams look far more separated than they really are; positional dispersion is also scaled to the league's scoring settings.
+1. **Standard Game-Day Scoring (Monte Carlo)**: Realistic point curves for every position (QB, RB, WR, TE) tied to overall NFL team offensive scoring.
+2. **Boom / Bust Weeks (Monte Carlo)**: Accounts for wild blowouts, garbage-time spikes, and games where game scripts bench key starters.
+3. **Real NFL Game Logs (Monte Carlo)**: Samples directly from games players have actually played this season to ground projections in real NFL production.
+4. **Hot Streaks & Lineup Smarts (Monte Carlo)**: Weights recent multi-week momentum and rewards managers who consistently start their highest scorers.
+5. **Late-Season Wear & Tear (1.5x Injuries) (Monte Carlo)**: Stress-tests rosters with an above-average injury rate to see whose bench depth survives into winter.
+6. **Injury Crisis & Chaos (2.0x Injuries) (Monte Carlo)**: Simulates a worst-case injury bug where multiple starters go down, testing true roster depth.
+7. **Shootouts & Team Stacks (Monte Carlo)**: Simulates high-scoring 40-point shootouts where quarterbacks and their pass-catchers erupt together.
+8. **Late-Season Rookie Surges (Monte Carlo)**: Accounts for rookies and young prospects earning bigger roles and snap counts down the stretch.
+9. **Safe Chalk & Low Variance (Monte Carlo)**: A predictable, low-volatility scenario where star players reliably hit their projected baselines.
+10. **Contender vs. Rebuilder Tactics (Monte Carlo)**: Reflects real dynasty behavior—contenders lean on veteran floors, while rebuilders test young talent.
+11. **Monster Outlier Booms (Monte Carlo)**: Captures legendary 40+ point ceiling games alongside sudden in-game exits (hamstrings, early injuries).
+12. **Backup QB Downgrades (Monte Carlo)**: When a starting quarterback misses time, their wide receivers and tight ends take a realistic efficiency hit.
+13. **Pure Matchup Math (Closed-Form)**: Calculates exact mathematical win probabilities for every matchup and median game without simulation randomness.
 
-In each simulated week, Starter PF sums pre-kickoff starters while Max PF solves the exact ex-post optimal lineup (via transversal-matroid bipartite matching) across all active, bench, and taxi players—capturing the real Jensen's-inequality bench lift that separates deep benches from stripped-down rebuilders. Head-to-head matchups and Sleeper's extra weekly **league-median** matchup determine playoff qualification, with simulated season Starter PF breaking record ties. Non-playoff teams are ordered strictly by final regular-season Max PF, lowest first, for picks 1–6; playoff qualifiers are ordered by reverse regular-season seed for picks 7–12 (the last playoff seed receives pick 07, up to the #1 seed receiving pick 12). Displayed slots `01..N` are assigned 1-to-1 via lottery likelihood and expected draft pick so duplicate or missing pick slots cannot occur.
+### Roster Modeling & Anti-Tanking Max PF
 
-### Seeding Dynamics & Mathematical Consistency
-Odds chips reflect the consensus average across all thirteen engines sorted strictly in descending order of calculated probability (6,000 Monte Carlo seasons + analytical Gaussian convolution). Expected Pick (`xPick`) displays the probability-weighted average draft slot across all thirteen engines (&Sigma; [probability &times; slot]), providing a single continuous metric for each franchise's overall draft capital expectancy. Pick 07 is awarded to the 6th playoff seed. In leagues with weekly median scoring, a team that mounts a strong winning run over remaining games can qualify for the postseason, resulting in Pick 07. Conversely, Pick 06 requires failing to qualify for the playoffs while outscoring all other lottery rosters in season Max PF. Because offensive point surges naturally produce matchup and median victories, high-scoring trajectories transition rosters into the postseason tier (Pick 07) significantly more often than stranding them at the top of the lottery tier (Pick 06).
+- **Hindsight Lineups (Max PF):** In dynasty leagues, non-playoff draft order is decided by **Max Points For (Max PF)**, not your win-loss record. In each simulated week, the engine reviews every active, bench, and taxi player to calculate the highest legal lineup in 20/20 hindsight. Benching your stars to intentionally lose matchups will never lower your Max PF.
+- **Bench Depth & Injury Survival:** Players face realistic weekly injury probabilities based on actual NFL data (running backs lead at ~4.6% per game, tight ends ~3.6%, wide receivers ~3.3%, and quarterbacks ~2.2%). When a starter is sidelined, the best bench player automatically steps up. Teams with hollow benches suffer severe scoring drops, while deep benches protect weekly floors and playoff seedings.
+- **Season-Long Shocks:** Each simulated season draws persistent rest-of-season performance shocks for individual players and NFL offenses. This prevents weekly noise from falsely making close teams look artificially separated over the course of a 14-week season.
+
+### Seeding Dynamics & Pick Assignment
+
+- **Picks 01–06 (Lottery Tier):** Awarded to the non-playoff teams, ordered strictly by lowest regular-season Max PF. The lowest-scoring non-playoff team receives the #1 overall pick.
+- **Picks 07–12 (Playoff Tier):** Awarded to playoff qualifiers, ordered in reverse of regular-season finish (the last playoff seed receives Pick 07; the #1 seed receives Pick 12).
+- **The Playoff Bubble (Pick 06 vs. Pick 07):** A bubble team that goes on a late-season hot streak usually wins enough matchups (and weekly median games) to sneak into the playoffs, locking them into Pick 07. Landing Pick 06 requires leading all non-playoff teams in Max PF while still missing the postseason entirely—a rare needle to thread.
+- **Expected Pick (`xPick`):** The probability-weighted average draft position (&Sigma; [Pick Number &times; Probability]). An xPick of `1.4` indicates a near-certain top-2 pick, while `6.8` indicates a team hovering right on the playoff bubble.
 
 These are estimates, not official league draft positions. Sleeper league settings and scoring data are the source of truth; public APIs may change or be temporarily unavailable.
 
