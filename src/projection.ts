@@ -3,7 +3,6 @@ import {
   playerFitsSlot,
   selectOptimalLineup,
   starterSlotsForLeague,
-  type BracketMatch,
   type LeagueData,
   type SleeperPlayer,
   type SleeperRoster,
@@ -521,7 +520,6 @@ function buildGlobalPlayerProfiles(
   hasMilestoneBonuses: boolean,
   firstSimWeek: number,
   regularEnd: number,
-  playoffEnd: number,
 ): { profiles: GlobalPlayerProfile[]; idToGlobalIndex: Map<string, number> } {
   const idToGlobalIndex = new Map<string, number>()
   const profiles: GlobalPlayerProfile[] = []
@@ -541,7 +539,7 @@ function buildGlobalPlayerProfiles(
   }
 
   const byeMaskByNflTeam = new Map<string, number>()
-  for (let w = firstSimWeek; w <= playoffEnd; w += 1) {
+  for (let w = firstSimWeek; w <= regularEnd; w += 1) {
     for (const abbr of data.weeks[w]?.byes ?? []) {
       const norm = normalizeNflTeam(abbr)
       if (norm) byeMaskByNflTeam.set(norm, (byeMaskByNflTeam.get(norm) ?? 0) | (1 << w))
@@ -953,23 +951,6 @@ function teamName(data: LeagueData, roster: SleeperRoster): string {
   return user?.metadata?.team_name || user?.display_name || `Team ${roster.roster_id}`
 }
 
-function findDecidedBracketMatch(
-  bracket: readonly BracketMatch[],
-  round: number,
-  teamA: number,
-  teamB: number,
-): { winner: number; loser: number } | undefined {
-  const match = bracket.find(
-    (item) =>
-      item.r === round &&
-      item.w != null &&
-      item.l != null &&
-      ((item.t1 === teamA && item.t2 === teamB) || (item.t1 === teamB && item.t2 === teamA)),
-  )
-  if (!match || match.w == null || match.l == null) return undefined
-  return { winner: match.w, loser: match.l }
-}
-
 function assignBijectiveDraftPicks<T extends { probabilities: number[]; maxPf: number }>(
   teams: T[],
   nonPlayoffCount: number,
@@ -1019,11 +1000,9 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   const playoffStart = Number(league.settings.playoff_week_start) || 15
   const playoffTeams = Math.min(count, Math.max(0, Number(league.settings.playoff_teams) || 6))
   const nonPlayoffCount = Math.max(0, count - playoffTeams)
-  const reseedPlayoffs = Number(league.settings.playoff_type) === 1
   const hasLeagueMedianMatch = Number(league.settings.league_average_match) === 1
 
   const regularEnd = Math.min(18, Math.max(1, playoffStart - 1))
-  const playoffEnd = Math.min(18, playoffStart + (playoffTeams > 4 ? 2 : 1))
   const firstSimWeek = Math.max(1, data.lastScoredWeek + 1)
 
   const nflTeamToId = new Map<string, number>()
@@ -1045,14 +1024,13 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     hasMilestoneBonuses,
     firstSimWeek,
     regularEnd,
-    playoffEnd,
   )
 
   const bootstrapPools = buildEmpiricalBootstrapPools(data)
   const compiledWeeks = new Map<number, Map<number, CompiledRosterWeek>>()
   let maxCompiledPlayers = slots.length
 
-  for (let week = firstSimWeek; week <= playoffEnd; week += 1) {
+  for (let week = firstSimWeek; week <= regularEnd; week += 1) {
     const feed = data.weeks[week]
     const isLiveCurrentWeek = week === data.currentWeek && week > data.lastScoredWeek
     const weeksAhead = Math.max(0, week - data.currentWeek)
@@ -1582,96 +1560,18 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       })
 
       const playoff = seeded.slice(0, playoffTeams)
-      const seedRank = new Map(playoff.map((roster, idx) => [roster.roster_id, idx + 1]))
+      const playoffSet = new Set(playoff.map((roster) => roster.roster_id))
 
-      const playoffWeekScores = new Map<number, Map<number, number>>()
-      const getPlayoffScore = (rosterId: number, week: number): number => {
-        const clampedWeek = Math.min(18, week)
-        let weekCache = playoffWeekScores.get(clampedWeek)
-        if (!weekCache) {
-          while (markovCurrentWeek < clampedWeek) {
-            advanceMarkovInjuriesOneWeek(markovCurrentWeek, model.attritionScale, rng)
-            markovCurrentWeek += 1
-          }
-          weekCache = new Map<number, number>()
-          playoffWeekScores.set(clampedWeek, weekCache)
-          rollNflTeamShocks(model.teamCorrSd, rng)
-        }
-        const existing = weekCache.get(rosterId)
-        if (existing !== undefined) return existing
-        const rw = compiledWeeks.get(clampedWeek)?.get(rosterId)
-        const score = rw
-          ? simulateRosterForWeek(rw, rosterId, model, fullIdioVarFactor, rng, false).starterScore
-          : 0
-        weekCache.set(rosterId, score)
-        return score
-      }
-
-      const playGame = (first: number, second: number, round: number): { winner: number; loser: number } => {
-        const decided = findDecidedBracketMatch(data.winnersBracket, round, first, second)
-        if (decided) return decided
-        const week = playoffStart + round - 1
-        const a = getPlayoffScore(first, week)
-        const b = getPlayoffScore(second, week)
-        if (Math.abs(a - b) < 0.01) {
-          const firstBetter = (seedRank.get(first) ?? 99) < (seedRank.get(second) ?? 99)
-          return firstBetter ? { winner: first, loser: second } : { winner: second, loser: first }
-        }
-        return a > b ? { winner: first, loser: second } : { winner: second, loser: first }
-      }
-
-      const playoffOrder: number[] = []
-      const ids = playoff.map((roster) => roster.roster_id)
-
-      if (ids.length === 6) {
-        const wildOne = playGame(ids[2], ids[5], 1)
-        const wildTwo = playGame(ids[3], ids[4], 1)
-        let semiOneOpponent = wildTwo.winner
-        let semiTwoOpponent = wildOne.winner
-        if (reseedPlayoffs) {
-          const winnersBySeed = [wildOne.winner, wildTwo.winner].sort(
-            (a, b) => (seedRank.get(a) ?? 99) - (seedRank.get(b) ?? 99),
-          )
-          semiOneOpponent = winnersBySeed[1]
-          semiTwoOpponent = winnersBySeed[0]
-        }
-        const semiOne = playGame(ids[0], semiOneOpponent, 2)
-        const semiTwo = playGame(ids[1], semiTwoOpponent, 2)
-        const fifth = playGame(wildOne.loser, wildTwo.loser, 2)
-        const final = playGame(semiOne.winner, semiTwo.winner, 3)
-        const third = playGame(semiOne.loser, semiTwo.loser, 3)
-        playoffOrder.push(final.winner, final.loser, third.winner, third.loser, fifth.winner, fifth.loser)
-      } else if (ids.length === 4) {
-        const semiOne = playGame(ids[0], ids[3], 1)
-        const semiTwo = playGame(ids[1], ids[2], 1)
-        const final = playGame(semiOne.winner, semiTwo.winner, 2)
-        const third = playGame(semiOne.loser, semiTwo.loser, 2)
-        playoffOrder.push(final.winner, final.loser, third.winner, third.loser)
-      } else if (ids.length === 8) {
-        const q1 = playGame(ids[0], ids[7], 1)
-        const q2 = playGame(ids[3], ids[4], 1)
-        const q3 = playGame(ids[1], ids[6], 1)
-        const q4 = playGame(ids[2], ids[5], 1)
-        const s1 = playGame(q1.winner, q2.winner, 2)
-        const s2 = playGame(q3.winner, q4.winner, 2)
-        const final = playGame(s1.winner, s2.winner, 3)
-        const third = playGame(s1.loser, s2.loser, 3)
-        const qLosers = [q1.loser, q2.loser, q3.loser, q4.loser].sort(
-          (a, b) => (simulatedMaxPf.get(b) ?? 0) - (simulatedMaxPf.get(a) ?? 0),
-        )
-        playoffOrder.push(final.winner, final.loser, third.winner, third.loser, ...qLosers)
-      } else {
-        playoffOrder.push(...ids)
-      }
-
-      playoffOrder.forEach((rosterId, index) => {
-        const team = stats.get(rosterId)!
+      // Playoff teams get draft picks based on regular season seed (not playoff tournament games):
+      // Seed 1 (top seed, index 0) -> Pick count (12)
+      // Seed 6 (last seed, index playoffTeams - 1) -> Pick 7
+      playoff.forEach((roster, index) => {
+        const team = stats.get(roster.roster_id)!
         const slot = count - index
         team.picks[slot] += 1
         team.modelPicks[model.key][slot] += 1
       })
 
-      const playoffSet = new Set(ids)
       const eliminated = data.rosters
         .filter((roster) => !playoffSet.has(roster.roster_id))
         .sort((a, b) => (simulatedMaxPf.get(a.roster_id) ?? 0) - (simulatedMaxPf.get(b.roster_id) ?? 0))
