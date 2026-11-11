@@ -100,6 +100,7 @@ export interface LeagueData {
   historicalMaxPf: Record<number, number[]>
   historicalTeamScores: Record<number, number[]>
   historicalPlayerPoints: Record<string, number[]>
+  historicalPlayerWeeks: Record<string, number[]>
   lastUpdated: number
 }
 
@@ -377,13 +378,19 @@ export async function loadLeagueData(leagueId: string): Promise<LeagueData> {
   ]))
 
   const historicalPlayerPoints: Record<string, number[]> = {}
-  for (const [, matchups] of historicEntries) {
+  const historicalPlayerWeeks: Record<string, number[]> = {}
+  for (const [week, matchups] of historicEntries) {
     for (const matchup of matchups) {
       for (const [playerId, pts] of Object.entries(matchup.players_points ?? {})) {
         if (typeof pts === 'number' && Number.isFinite(pts)) {
           const bucket = historicalPlayerPoints[playerId]
-          if (bucket) bucket.push(pts)
-          else historicalPlayerPoints[playerId] = [pts]
+          if (bucket) {
+            bucket.push(pts)
+            historicalPlayerWeeks[playerId].push(week)
+          } else {
+            historicalPlayerPoints[playerId] = [pts]
+            historicalPlayerWeeks[playerId] = [week]
+          }
         }
       }
     }
@@ -403,6 +410,7 @@ export async function loadLeagueData(leagueId: string): Promise<LeagueData> {
     historicalMaxPf,
     historicalTeamScores,
     historicalPlayerPoints,
+    historicalPlayerWeeks,
     lastUpdated: Date.now(),
   }
 }

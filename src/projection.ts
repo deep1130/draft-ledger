@@ -41,6 +41,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 1.35,
   },
   {
     key: 'boom-bust',
@@ -55,6 +56,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 1.05,
   },
   {
     key: 'bootstrap',
@@ -69,6 +71,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 1.15,
   },
   {
     key: 'bayesian-form',
@@ -83,6 +86,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 1.25,
   },
   {
     key: 'attrition-15',
@@ -97,6 +101,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 0.70,
   },
   {
     key: 'attrition-20',
@@ -111,6 +116,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 0.45,
   },
   {
     key: 'shootout-stacking',
@@ -125,6 +131,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 0.90,
   },
   {
     key: 'youth-breakout',
@@ -139,6 +146,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 0.90,
   },
   {
     key: 'conservative-floor',
@@ -153,6 +161,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 0.75,
+    priorWeight: 0.75,
   },
   {
     key: 'rebuilder-contender',
@@ -167,6 +176,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: true,
     useQbDomino: false,
     dispersionScale: 1.0,
+    priorWeight: 1.00,
   },
   {
     key: 'fat-tail',
@@ -181,6 +191,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: false,
     dispersionScale: 1.25,
+    priorWeight: 0.60,
   },
   {
     key: 'qb-domino',
@@ -195,6 +206,7 @@ const MODELS = [
     useRebuilderContenderEfficiency: false,
     useQbDomino: true,
     dispersionScale: 1.0,
+    priorWeight: 0.90,
   },
 ] as const
 
@@ -202,6 +214,17 @@ type ModelConfig = (typeof MODELS)[number]
 type ModelKey = ModelConfig['key']
 
 const TOTAL_SIMULATIONS = SIMULATIONS_PER_MODEL * MODELS.length
+const ANALYTICAL_ENGINE_PRIOR_WEIGHT = 1.15
+
+// Position-calibrated Empirical Bayes prior pseudocounts kappa_pos = sigma_pos^2 / tau_pos^2.
+const POSITIONAL_EB_PRIOR_KAPPA: Record<string, number> = {
+  QB: 4.5,
+  RB: 6.0,
+  WR: 7.5,
+  TE: 8.5,
+  K: 10.0,
+  DEF: 9.0,
+}
 
 // Baseline 1-PPR single-game positional dispersion theta around pre-game projections (scaled dynamically by league scoring).
 const BASE_POSITIONAL_THETA: Record<string, number> = {
@@ -484,14 +507,82 @@ function milestoneBonusFromYards(
   return bonus
 }
 
-function tailProbNormal(threshold: number, mean: number, sd: number): number {
+const LANCZOS_COEFFS = [
+  676.5203681218851,
+  -1259.1392167224028,
+  771.3234287776531,
+  -176.6150291621406,
+  12.507343278686905,
+  -0.13857109526572012,
+  9.984369578019572e-6,
+  1.5056327351493116e-7,
+]
+
+function logGamma(z: number): number {
+  if (z < 0.5) {
+    return Math.log(Math.PI / Math.sin(Math.PI * z)) - logGamma(1 - z)
+  }
+  const zm1 = z - 1
+  let x = 0.9999999999998099
+  for (let i = 0; i < LANCZOS_COEFFS.length; i += 1) {
+    x += LANCZOS_COEFFS[i] / (zm1 + i + 1)
+  }
+  const t = zm1 + 7.5
+  return 0.5 * Math.log(2 * Math.PI) + (zm1 + 0.5) * Math.log(t) - t + Math.log(x)
+}
+
+/**
+ * Exact regularized upper incomplete Gamma integral:
+ * P(X >= threshold) = 1 - gamma(k, threshold / theta) / Gamma(k)
+ * where k = (mean / sd)^2 and theta = sd^2 / mean.
+ */
+function tailProbGamma(threshold: number, mean: number, sd: number): number {
+  if (threshold <= 0) return 1
   if (mean <= 0 || sd <= 0) return mean >= threshold ? 1 : 0
-  const z = (threshold - mean) / sd
-  const t = 1 / (1 + 0.2316419 * Math.abs(z))
-  const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-  const pdf = Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI)
-  const upper = pdf * poly
-  return z >= 0 ? upper : 1 - upper
+  const k = (mean * mean) / (sd * sd)
+  const theta = (sd * sd) / mean
+  const x = threshold / theta
+  if (x <= 0) return 1
+
+  const lgk = logGamma(k)
+  if (x < k + 1) {
+    // Series representation for lower incomplete gamma P(k, x), then return 1 - P(k, x).
+    let ap = k
+    let term = 1 / k
+    let sum = term
+    for (let iter = 0; iter < 64; iter += 1) {
+      ap += 1
+      term *= x / ap
+      sum += term
+      if (Math.abs(term) < Math.abs(sum) * 1e-12) break
+    }
+    const logPrefactor = -x + k * Math.log(x) - lgk
+    if (logPrefactor < -700) return 1
+    const pLower = Math.min(1, Math.max(0, sum * Math.exp(logPrefactor)))
+    return Math.max(0, 1 - pLower)
+  }
+
+  // Modified Lentz continued fraction for upper incomplete gamma Q(k, x).
+  const tiny = 1e-30
+  let b = x + 1 - k
+  let c = 1 / tiny
+  let d = 1 / (Math.abs(b) < tiny ? tiny : b)
+  let h = d
+  for (let i = 1; i <= 64; i += 1) {
+    const an = -i * (i - k)
+    b += 2
+    d = an * d + b
+    if (Math.abs(d) < tiny) d = tiny
+    c = b + an / c
+    if (Math.abs(c) < tiny) c = tiny
+    d = 1 / d
+    const del = d * c
+    h *= del
+    if (Math.abs(del - 1) < 1e-12) break
+  }
+  const logPrefactor = -x + k * Math.log(x) - lgk
+  if (logPrefactor < -700) return 0
+  return Math.min(1, Math.max(0, h * Math.exp(logPrefactor)))
 }
 
 function expectedMilestoneBonus(stats: StatLine | undefined, scoring: Record<string, number>): number {
@@ -504,32 +595,32 @@ function expectedMilestoneBonus(stats: StatLine | undefined, scoring: Record<str
 
   if (recYd > 15 && (scoring.bonus_rec_yd_100 || scoring.bonus_rec_yd_200)) {
     const sd = Math.max(12, 0.48 * recYd + 12)
-    const p200 = tailProbNormal(200, recYd, sd)
-    const p100 = Math.max(0, tailProbNormal(100, recYd, sd) - p200)
+    const p200 = tailProbGamma(200, recYd, sd)
+    const p100 = Math.max(0, tailProbGamma(100, recYd, sd) - p200)
     expected += p100 * num(scoring.bonus_rec_yd_100) + p200 * num(scoring.bonus_rec_yd_200)
   }
   if (rushYd > 15 && (scoring.bonus_rush_yd_100 || scoring.bonus_rush_yd_200)) {
     const sd = Math.max(12, 0.46 * rushYd + 10)
-    const p200 = tailProbNormal(200, rushYd, sd)
-    const p100 = Math.max(0, tailProbNormal(100, rushYd, sd) - p200)
+    const p200 = tailProbGamma(200, rushYd, sd)
+    const p100 = Math.max(0, tailProbGamma(100, rushYd, sd) - p200)
     expected += p100 * num(scoring.bonus_rush_yd_100) + p200 * num(scoring.bonus_rush_yd_200)
   }
   const combinedYd = rushYd + recYd
   if (combinedYd > 20 && (scoring.bonus_rush_rec_yd_100 || scoring.bonus_rush_rec_yd_200)) {
     const sd = Math.max(14, 0.44 * combinedYd + 12)
-    const p200 = tailProbNormal(200, combinedYd, sd)
-    const p100 = Math.max(0, tailProbNormal(100, combinedYd, sd) - p200)
+    const p200 = tailProbGamma(200, combinedYd, sd)
+    const p100 = Math.max(0, tailProbGamma(100, combinedYd, sd) - p200)
     expected += p100 * num(scoring.bonus_rush_rec_yd_100) + p200 * num(scoring.bonus_rush_rec_yd_200)
   }
   if (passYd > 80 && (scoring.bonus_pass_yd_300 || scoring.bonus_pass_yd_400)) {
     const sd = Math.max(35, 0.27 * passYd + 18)
-    const p400 = tailProbNormal(400, passYd, sd)
-    const p300 = Math.max(0, tailProbNormal(300, passYd, sd) - p400)
+    const p400 = tailProbGamma(400, passYd, sd)
+    const p300 = Math.max(0, tailProbGamma(300, passYd, sd) - p400)
     expected += p300 * num(scoring.bonus_pass_yd_300) + p400 * num(scoring.bonus_pass_yd_400)
   }
   if (passCmp > 8 && scoring.bonus_pass_cmp_25) {
     const sd = Math.max(3.5, 0.24 * passCmp + 1.5)
-    expected += tailProbNormal(25, passCmp, sd) * num(scoring.bonus_pass_cmp_25)
+    expected += tailProbGamma(25, passCmp, sd) * num(scoring.bonus_pass_cmp_25)
   }
   return expected
 }
@@ -694,16 +785,25 @@ function buildGlobalPlayerProfiles(
     const injuryTier = classifyInjury(player)
 
     const histScores = data.historicalPlayerPoints[id] ?? []
+    const histWeeks = data.historicalPlayerWeeks?.[id] ?? []
     const liveRawState = nflTeam && liveFeed ? liveFeed.gameStates[nflTeam] : undefined
     const liveOnBye = Boolean(nflTeam && liveByeSet.has(nflTeam))
     const livePts = livePointsByPlayer.get(id) ?? 0
 
-    const observedScores =
-      isLiveCurrentWeek && !liveOnBye && liveRawState === 'post'
-        ? [...histScores, livePts]
-        : histScores
+    const includeLivePost = isLiveCurrentWeek && !liveOnBye && liveRawState === 'post'
+    const observedScores = includeLivePost ? [...histScores, livePts] : histScores
+    const observedWeeks = includeLivePost
+      ? [...histWeeks, data.currentWeek]
+      : (histWeeks.length === histScores.length ? histWeeks : histScores.map((_, idx) => idx + 1))
 
-    const activeScores = observedScores.filter((pts) => pts > 0.5)
+    const activeScores: number[] = []
+    const activeWeeks: number[] = []
+    for (let j = 0; j < observedScores.length; j += 1) {
+      if (observedScores[j] > 0.5) {
+        activeScores.push(observedScores[j])
+        activeWeeks.push(observedWeeks[j] ?? (j + 1))
+      }
+    }
     const activeGameCount = activeScores.length
 
     const injuredInLiveGame =
@@ -756,11 +856,16 @@ function buildGlobalPlayerProfiles(
       const theta = positionalTheta[primaryPos] ?? 2.15
       const winCap = medianActive + 2.1 * theta * Math.sqrt(Math.max(medianActive, 4))
 
+      const refWeek = includeLivePost ? data.currentWeek : Math.max(1, data.lastScoredWeek)
       let wSum = 0
+      let wSqSum = 0
       let valSum = 0
       for (let j = 0; j < activeGameCount; j += 1) {
-        const w = 1 + 0.30 * j
+        const weeksAgo = Math.max(0, refWeek - activeWeeks[j])
+        // Exponential calendar-week recency weight with 4.5-week half-life.
+        const w = Math.pow(0.5, weeksAgo / 4.5)
         wSum += w
+        wSqSum += w * w
         valSum += w * Math.min(activeScores[j], winCap)
       }
       recencyActiveMean = wSum > 0 ? valSum / wSum : meanFutureProj
@@ -768,8 +873,11 @@ function buildGlobalPlayerProfiles(
       if (!recentHealthyBenched || recencyActiveMean < meanFutureProj) {
         const maxUp = meanFutureProj >= 2.0 ? 2.65 : 1.75
         const maxUpStrong = meanFutureProj >= 2.0 ? 3.00 : 1.95
-        const alphaStd = activeGameCount / (activeGameCount + 7.0)
-        const alphaStrong = activeGameCount / (activeGameCount + 3.5)
+        // Kish's effective sample size n_eff = (sum w)^2 / sum(w^2) paired with position-calibrated kappa_pos = sigma_pos^2 / tau_pos^2.
+        const nEff = wSqSum > 0 ? (wSum * wSum) / wSqSum : activeGameCount
+        const kappaPos = POSITIONAL_EB_PRIOR_KAPPA[primaryPos] ?? 7.0
+        const alphaStd = nEff / (nEff + kappaPos)
+        const alphaStrong = nEff / (nEff + 0.5 * kappaPos)
         const blendedStd = (1 - alphaStd) * meanFutureProj + alphaStd * recencyActiveMean
         const blendedStrong = (1 - alphaStrong) * meanFutureProj + alphaStrong * recencyActiveMean
         ebStandardMult = Math.max(0.58, Math.min(maxUp, blendedStd / meanFutureProj))
@@ -1012,13 +1120,16 @@ function samplePlayerRemainingPoints(
   formScale: number,
   sampler: ModelConfig['sampler'],
   milestoneWeights: MilestoneWeights,
-  idioVarFactor: number,
+  corrVar: number,
+  dispersionScale: number,
   rng: RandomSource,
 ): number {
   const mu = pw.remBaseMu * formScale
   if (mu <= 0.02) return 0
 
-  const scale = pw.theta2 * idioVarFactor
+  // Law of Total Variance: Var(G * T) = (1 + corrVar) * mu * scale + corrVar * mu^2 = theta^2 * dispersionScale * mu.
+  const targetVarPerMu = pw.theta2 * dispersionScale
+  const scale = Math.max(0.35 * targetVarPerMu, targetVarPerMu - corrVar * mu) / (1 + corrVar)
 
   let multiplier = 1
   if (sampler === 'bootstrap' && pw.bootstrapPool.length > 0 && pw.state === 3) {
@@ -1042,7 +1153,9 @@ function samplePlayerRemainingPoints(
     } else {
       const shape = mu / scale
       const idioSample = sampleGamma(shape, rng) * scale
-      multiplier = (idioSample / mu) * teamMult * 0.95
+      // 0.896835 exactly balances the 5% bust (E=0.15) and 6% Pareto boom (E=3.23862) branches so E[multiplier] = 1.0000.
+      const meanPreserveMult = pw.state === 3 ? 0.896835 : 1.0
+      multiplier = (idioSample / mu) * teamMult * meanPreserveMult
     }
   } else {
     const shape = mu / scale
@@ -1057,7 +1170,9 @@ function samplePlayerRemainingPoints(
     return baseSimulated + pw.expectedBonus * formScale * Math.min(2.2, multiplier)
   }
 
-  const yardMult = multiplier * formScale
+  // Decouple yardage multiplier from pure-TD fantasy point spikes while preserving E[yardMult] = formScale.
+  const yardNoise = Math.max(0.25, 1 + 0.18 * rng.normal())
+  const yardMult = Math.max(0, 0.74 * multiplier + 0.26 * yardNoise) * formScale
   const bonus = milestoneBonusFromYards(
     pw.projPassYd * yardMult,
     pw.projPassCmp * yardMult,
@@ -1192,6 +1307,13 @@ function makeDoublyStochastic(matrix: number[][], maxIter = 50): number[][] {
   return res
 }
 
+const GAUSS_HERMITE_Z = [-2.8569700138728056, -1.3556261799742659, 0, 1.3556261799742659, 2.8569700138728056]
+const GAUSS_HERMITE_W = [0.011257411327720689, 0.2220759220056126, 0.5333333333333333, 0.2220759220056126, 0.011257411327720689]
+
+function normalPdf(z: number): number {
+  return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI)
+}
+
 function computeAnalyticalProbabilities(
   data: LeagueData,
   compiledWeeks: Map<number, Map<number, CompiledRosterWeek>>,
@@ -1201,6 +1323,8 @@ function computeAnalyticalProbabilities(
   baseFptsByRoster: Map<number, number>,
   baseMaxPfByRoster: Map<number, number>,
   slots: readonly string[],
+  slotInfo: ReturnType<typeof compileSlotGroups>,
+  globalProfiles: readonly GlobalPlayerProfile[],
   count: number,
   nonPlayoffCount: number,
   hasLeagueMedianMatch: boolean,
@@ -1219,7 +1343,7 @@ function computeAnalyticalProbabilities(
   const winProbsByRoster = new Map<number, number[]>()
 
   for (const r of data.rosters) {
-    baseWins.set(r.roster_id, num(r.settings.wins))
+    baseWins.set(r.roster_id, num(r.settings.wins) + num(r.settings.ties) * 0.5)
     totalStarterMu.set(r.roster_id, baseFptsByRoster.get(r.roster_id) ?? 0)
     totalStarterVar.set(r.roster_id, 0)
     totalMaxPfMu.set(r.roster_id, baseMaxPfByRoster.get(r.roster_id) ?? 0)
@@ -1227,68 +1351,164 @@ function computeAnalyticalProbabilities(
     winProbsByRoster.set(r.roster_id, [])
   }
 
+  const teamCorrVar = 0.18 * 0.18
+
   for (let week = firstSimWeek; week <= regularEnd; week += 1) {
     const weekRosters = compiledWeeks.get(week)
     if (!weekRosters) continue
+    const weeksAhead = Math.max(0, week - data.currentWeek)
 
     const weekStarterMu = new Map<number, number>()
     const weekStarterSd = new Map<number, number>()
-    const weekMaxPfMu = new Map<number, number>()
-    const weekMaxPfSd = new Map<number, number>()
 
     for (const r of data.rosters) {
       const rw = weekRosters.get(r.roster_id)
-      if (!rw) {
+      if (!rw || rw.players.length === 0) {
         weekStarterMu.set(r.roster_id, 0)
         weekStarterSd.set(r.roster_id, 10)
-        weekMaxPfMu.set(r.roster_id, 0)
-        weekMaxPfSd.set(r.roster_id, 10)
         continue
+      }
+
+      const players = rw.players
+      const n = players.length
+      const pMu = new Float64Array(n)
+      const pRemMu = new Float64Array(n)
+      const pVar = new Float64Array(n)
+
+      for (let i = 0; i < n; i += 1) {
+        const pw = players[i]
+        if (pw.state === 0) continue
+        if (pw.state === 1) {
+          pMu[i] = pw.lockedPoints
+          continue
+        }
+        if (pw.state === 2) {
+          const rem = pw.remBaseMu + pw.expectedBonus
+          pMu[i] = pw.lockedPoints + rem
+          pRemMu[i] = rem
+          pVar[i] = pw.remBaseMu * pw.theta2
+          continue
+        }
+
+        const prof = pw.globalPlayerIndex >= 0 ? globalProfiles[pw.globalPlayerIndex] : undefined
+        const p0 = prof ? liveInGamePlayProbability(prof.injuryTier) : 1
+        const lambda = prof?.injuryHazardBase ?? 0.032
+        const muRec = prof?.injuryTier === 'ir' ? 0.18 : 0.44
+        const pInf = muRec / (lambda + muRec)
+        const rhoMarkov = Math.max(0, 1 - lambda - muRec)
+        const pAvail = weeksAhead === 0 ? p0 : pInf + (p0 - pInf) * Math.pow(rhoMarkov, weeksAhead)
+
+        const activeMu = (pw.remBaseMu + pw.expectedBonus) * pw.stdScale
+        const activeVar = (pw.remBaseMu * pw.stdScale) * pw.theta2
+        pMu[i] = pAvail * activeMu
+        pRemMu[i] = pMu[i]
+        // Law of Total Variance for zero-inflated Gamma: E[Var(X|I)] + Var(E[X|I]).
+        pVar[i] = pAvail * activeVar + pAvail * (1 - pAvail) * activeMu * activeMu
+      }
+
+      const isStarter = new Uint8Array(n)
+      if (rw.hasActualStarters) {
+        for (const sIdx of rw.actualStarterSlotPlayers) {
+          if (sIdx >= 0) isStarter[sIdx] = 1
+        }
+        for (let slotIdx = 0; slotIdx < slots.length; slotIdx += 1) {
+          const pIdx = rw.actualStarterSlotPlayers[slotIdx]
+          if (pIdx >= 0 && pMu[pIdx] > 0.05) continue
+          const slotMask = SLOT_MASK[slots[slotIdx]] ?? 0
+          const slotName = slots[slotIdx]
+          let bestSub = -1
+          let bestExp = 0
+          for (let i = 0; i < n; i += 1) {
+            if (
+              !isStarter[i] &&
+              players[i].state === 3 &&
+              pMu[i] > bestExp &&
+              (slotMask ? (players[i].posMask & slotMask) !== 0 : playerFitsSlot(players[i].player, slotName))
+            ) {
+              bestExp = pMu[i]
+              bestSub = i
+            }
+          }
+          if (bestSub >= 0) {
+            if (pIdx >= 0) isStarter[pIdx] = 0
+            isStarter[bestSub] = 1
+          }
+        }
+      } else if (rw.canUseBitmaskGreedy) {
+        const orderScratch = new Int32Array(n)
+        fastBitmaskSelectStarters(players, pMu, orderScratch, isStarter, slotInfo.groups)
+      } else {
+        const candidates = players.map((pw, idx) => ({
+          id: pw.id,
+          player: pw.player,
+          points: pMu[idx],
+        }))
+        const chosen = new Set(selectOptimalLineup(candidates, slots).starterIds)
+        for (let i = 0; i < n; i += 1) {
+          if (chosen.has(players[i].id)) isStarter[i] = 1
+        }
       }
 
       let sMu = 0
       let sVar = 0
-      if (rw.hasActualStarters) {
-        for (let i = 0; i < slots.length; i += 1) {
-          const pIdx = rw.actualStarterSlotPlayers[i]
-          if (pIdx >= 0) {
-            const pw = rw.players[pIdx]
-            sMu += pw.lockedPoints + pw.remBaseMu
-            sVar += pw.remBaseMu * pw.theta2 * 1.05
+      const teamRemSum = new Map<number, number>()
+      const teamRemSqSum = new Map<number, number>()
+      const starterIndices: number[] = []
+
+      for (let i = 0; i < n; i += 1) {
+        if (!isStarter[i]) continue
+        starterIndices.push(i)
+        sMu += pMu[i]
+        sVar += pVar[i]
+        const tIdx = players[i].nflTeamIndex
+        if (tIdx >= 0 && pRemMu[i] > 0) {
+          teamRemSum.set(tIdx, (teamRemSum.get(tIdx) ?? 0) + pRemMu[i])
+          teamRemSqSum.set(tIdx, (teamRemSqSum.get(tIdx) ?? 0) + pRemMu[i] * pRemMu[i])
+        }
+      }
+
+      // Add bilinear offensive stack covariance: sum_{i != j in same NFL team} tau^2 * mu_i * mu_j.
+      for (const [tIdx, sumRem] of teamRemSum.entries()) {
+        const sqSum = teamRemSqSum.get(tIdx) ?? 0
+        sVar += teamCorrVar * Math.max(0, sumRem * sumRem - sqSum)
+      }
+
+      // Compute position-aware analytical Max PF option surplus over starters using Clark's Gaussian max formula.
+      let mMu = sMu
+      let mVar = sVar
+      const benchIndices: number[] = []
+      for (let i = 0; i < n; i += 1) {
+        if (!isStarter[i] && pMu[i] > 0.5) benchIndices.push(i)
+      }
+      benchIndices.sort((a, b) => pMu[b] - pMu[a])
+
+      for (let bRank = 0; bRank < benchIndices.length; bRank += 1) {
+        const bIdx = benchIndices[bRank]
+        const bMask = players[bIdx].posMask
+        let minStarterIdx = -1
+        let minStarterMu = Infinity
+        for (const sIdx of starterIndices) {
+          const sharesEligibility =
+            (bMask & players[sIdx].posMask) !== 0 ||
+            ((bMask & (2 | 4 | 8)) !== 0 && (players[sIdx].posMask & (2 | 4 | 8)) !== 0)
+          if (sharesEligibility && pMu[sIdx] < minStarterMu) {
+            minStarterMu = pMu[sIdx]
+            minStarterIdx = sIdx
           }
         }
-      } else {
-        const sorted = [...rw.players]
-          .filter((p) => p.state !== 0)
-          .sort((a, b) => (b.lockedPoints + b.remBaseMu) - (a.lockedPoints + a.remBaseMu))
-        const n = Math.min(slots.length, sorted.length)
-        for (let i = 0; i < n; i += 1) {
-          const pw = sorted[i]
-          sMu += pw.lockedPoints + pw.remBaseMu
-          sVar += pw.remBaseMu * pw.theta2 * 1.05
+        if (minStarterIdx >= 0) {
+          const delta = pMu[bIdx] - minStarterMu
+          const sdDiff = Math.sqrt(Math.max(4, pVar[bIdx] + pVar[minStarterIdx]))
+          const z = delta / sdDiff
+          const optionGain = delta * normalCdf(z) + sdDiff * normalPdf(z)
+          const attenuation = 0.55 / (1 + 0.38 * bRank)
+          mMu += optionGain * attenuation
+          mVar += pVar[bIdx] * normalCdf(z) * attenuation * 0.45
         }
       }
-
-      let mMu = 0
-      let mVar = 0
-      const active = rw.players.filter((p) => p.state !== 0)
-      const sortedActive = [...active].sort(
-        (a, b) => (b.lockedPoints + b.remBaseMu) - (a.lockedPoints + a.remBaseMu),
-      )
-      const nMax = Math.min(slots.length, sortedActive.length)
-      for (let i = 0; i < nMax; i += 1) {
-        const pw = sortedActive[i]
-        mMu += pw.lockedPoints + pw.remBaseMu * 1.08
-        mVar += pw.remBaseMu * pw.theta2 * 1.15
-      }
-
-      sVar += (sMu * 0.16) ** 2
-      mVar += (mMu * 0.14) ** 2
 
       weekStarterMu.set(r.roster_id, sMu)
       weekStarterSd.set(r.roster_id, Math.sqrt(Math.max(1, sVar)))
-      weekMaxPfMu.set(r.roster_id, mMu)
-      weekMaxPfSd.set(r.roster_id, Math.sqrt(Math.max(1, mVar)))
 
       totalStarterMu.set(r.roster_id, (totalStarterMu.get(r.roster_id) ?? 0) + sMu)
       totalStarterVar.set(r.roster_id, (totalStarterVar.get(r.roster_id) ?? 0) + sVar)
@@ -1311,119 +1531,190 @@ function computeAnalyticalProbabilities(
       const allMeans = [...weekStarterMu.values()].sort((a, b) => a - b)
       const mid = count >>> 1
       const medMu = count % 2 === 0 ? (allMeans[mid - 1] + allMeans[mid]) * 0.5 : allMeans[mid]
-      const medSd = 14
+      const avgVar = [...weekStarterSd.values()].reduce((acc, s) => acc + s * s, 0) / count
+      // Order-statistic variance of sample median for N teams: pi / (2N) * sigma^2.
+      const medVar = (Math.PI / (2 * count)) * avgVar
       for (const r of data.rosters) {
         const mu = weekStarterMu.get(r.roster_id) ?? 0
         const sd = weekStarterSd.get(r.roster_id) ?? 15
-        const pooledSd = Math.sqrt(sd * sd + medSd * medSd)
-        const pMed = normalCdf((mu - medMu) / Math.max(0.1, pooledSd))
+        const pooledSd = Math.sqrt(Math.max(1, sd * sd + medVar - (2 * sd * sd) / count))
+        const pMed = normalCdf((mu - medMu) / pooledSd)
         winProbsByRoster.get(r.roster_id)?.push(pMed)
       }
     }
   }
 
   const fullWinDists = new Map<number, Float64Array>()
+  const winMeanByRoster = new Map<number, number>()
+  const winSdByRoster = new Map<number, number>()
+
   for (const r of data.rosters) {
     const probs = winProbsByRoster.get(r.roster_id) ?? []
     const remDist = convolvePoissonBinomial(probs)
-    const bW = baseWins.get(r.roster_id) ?? 0
+    const bW = Math.round(baseWins.get(r.roster_id) ?? 0)
     const fullDist = new Float64Array(bW + remDist.length)
+    let meanW = bW
+    let varW = 0
+    for (const p of probs) {
+      meanW += p
+      varW += p * (1 - p)
+    }
     for (let k = 0; k < remDist.length; k += 1) {
       fullDist[bW + k] = remDist[k]
     }
     fullWinDists.set(r.roster_id, fullDist)
-  }
-
-  const pairwiseDominance = new Map<number, Map<number, number>>()
-  for (const r1 of data.rosters) {
-    pairwiseDominance.set(r1.roster_id, new Map<number, number>())
-    const dist1 = fullWinDists.get(r1.roster_id)!
-    const muPf1 = totalStarterMu.get(r1.roster_id) ?? 0
-    const varPf1 = totalStarterVar.get(r1.roster_id) ?? 100
-
-    for (const r2 of data.rosters) {
-      if (r1.roster_id === r2.roster_id) continue
-      const dist2 = fullWinDists.get(r2.roster_id)!
-      const muPf2 = totalStarterMu.get(r2.roster_id) ?? 0
-      const varPf2 = totalStarterVar.get(r2.roster_id) ?? 100
-      const tiebreakerProb = normalCdf((muPf1 - muPf2) / Math.sqrt(Math.max(1, varPf1 + varPf2)))
-
-      let pDominates = 0
-      for (let w1 = 0; w1 < dist1.length; w1 += 1) {
-        const probW1 = dist1[w1]
-        if (probW1 <= 1e-9) continue
-        for (let w2 = 0; w2 < dist2.length; w2 += 1) {
-          const probW2 = dist2[w2]
-          if (probW2 <= 1e-9) continue
-          const joint = probW1 * probW2
-          if (w1 > w2) {
-            pDominates += joint
-          } else if (w1 === w2) {
-            pDominates += joint * tiebreakerProb
-          }
-        }
-      }
-      pairwiseDominance.get(r1.roster_id)!.set(r2.roster_id, pDominates)
-    }
+    winMeanByRoster.set(r.roster_id, meanW)
+    winSdByRoster.set(r.roster_id, Math.sqrt(Math.max(0.25, varW)))
   }
 
   const playoffCount = count - nonPlayoffCount
-  const pairwiseLotteryDominance = new Map<number, Map<number, number>>()
-  for (const r1 of data.rosters) {
-    pairwiseLotteryDominance.set(r1.roster_id, new Map<number, number>())
-    const muM1 = totalMaxPfMu.get(r1.roster_id) ?? 0
-    const varM1 = totalMaxPfVar.get(r1.roster_id) ?? 100
-    for (const r2 of data.rosters) {
-      if (r1.roster_id === r2.roster_id) continue
-      const muM2 = totalMaxPfMu.get(r2.roster_id) ?? 0
-      const varM2 = totalMaxPfVar.get(r2.roster_id) ?? 100
-      const pEarlier = normalCdf((muM2 - muM1) / Math.sqrt(Math.max(1, varM1 + varM2)))
-      pairwiseLotteryDominance.get(r1.roster_id)!.set(r2.roster_id, pEarlier)
+  const rhoWinScore = 0.65
+  const condScoreFactor = Math.sqrt(1 - rhoWinScore * rhoWinScore)
+  const lotteryProbByRoster = new Map<number, number>()
+  const lotteryMeanZByRoster = new Map<number, number>()
+
+  // Conditional Gauss-Hermite quadrature over Team i's (Wins = w, Points = s_q) so opponent comparisons are conditionally independent.
+  for (const r of data.rosters) {
+    const rId = r.roster_id
+    const distI = fullWinDists.get(rId)!
+    const muW_i = winMeanByRoster.get(rId) ?? 0
+    const sdW_i = winSdByRoster.get(rId) ?? 1
+    const muS_i = totalStarterMu.get(rId) ?? 0
+    const sdS_i = Math.sqrt(Math.max(1, totalStarterVar.get(rId) ?? 100))
+
+    const picks = new Array(count).fill(0)
+    let lotProbSum = 0
+    let lotWeightedZ = 0
+
+    for (let w = 0; w < distI.length; w += 1) {
+      const pW = distI[w]
+      if (pW <= 1e-7) continue
+      const zW = (w - muW_i) / sdW_i
+      const condMuS_i = muS_i + rhoWinScore * sdS_i * zW
+      const condSdS_i = Math.max(1, sdS_i * condScoreFactor)
+
+      for (let q = 0; q < GAUSS_HERMITE_Z.length; q += 1) {
+        const weight = pW * GAUSS_HERMITE_W[q]
+        if (weight <= 1e-8) continue
+        const sRealized = condMuS_i + GAUSS_HERMITE_Z[q] * condSdS_i
+        const zTotal = 0.75 * zW + 0.25 * GAUSS_HERMITE_Z[q]
+
+        const oppBeatsProbs: number[] = []
+        for (const other of data.rosters) {
+          const oId = other.roster_id
+          if (oId === rId) continue
+          const distJ = fullWinDists.get(oId)!
+          let pStrictlyMoreWins = 0
+          for (let wJ = w + 1; wJ < distJ.length; wJ += 1) {
+            pStrictlyMoreWins += distJ[wJ]
+          }
+          const pSameWins = w < distJ.length ? distJ[w] : 0
+          let pTiebreakBeat = 0
+          if (pSameWins > 1e-8) {
+            const zW_j = (w - (winMeanByRoster.get(oId) ?? 0)) / (winSdByRoster.get(oId) ?? 1)
+            const muS_j = totalStarterMu.get(oId) ?? 0
+            const sdS_j = Math.sqrt(Math.max(1, totalStarterVar.get(oId) ?? 100))
+            const condMuS_j = muS_j + rhoWinScore * sdS_j * zW_j
+            const condSdS_j = Math.max(1, sdS_j * condScoreFactor)
+            pTiebreakBeat = 1 - normalCdf((sRealized - condMuS_j) / condSdS_j)
+          }
+          oppBeatsProbs.push(Math.min(1, Math.max(0, pStrictlyMoreWins + pSameWins * pTiebreakBeat)))
+        }
+
+        const aheadDist = convolvePoissonBinomial(oppBeatsProbs)
+        for (let kAhead = 0; kAhead < aheadDist.length; kAhead += 1) {
+          const pK = aheadDist[kAhead]
+          if (pK <= 1e-9) continue
+          const seed = kAhead + 1
+          const mass = weight * pK
+          if (seed <= playoffCount) {
+            const pickSlot = count - seed + 1
+            picks[pickSlot - 1] += mass
+          } else {
+            lotProbSum += mass
+            lotWeightedZ += mass * zTotal
+          }
+        }
+      }
+    }
+
+    lotteryProbByRoster.set(rId, lotProbSum)
+    lotteryMeanZByRoster.set(rId, lotProbSum > 1e-6 ? lotWeightedZ / lotProbSum : -0.5)
+    result.set(rId, picks)
+  }
+
+  // Conditional Max PF order statistics among the nonPlayoffCount eliminated lottery teams.
+  if (nonPlayoffCount > 0) {
+    const condLotMu = new Map<number, number>()
+    const condLotSd = new Map<number, number>()
+    const rhoWinMaxPf = 0.58
+
+    for (const r of data.rosters) {
+      const rId = r.roster_id
+      const muM = totalMaxPfMu.get(rId) ?? 0
+      const sdM = Math.sqrt(Math.max(1, totalMaxPfVar.get(rId) ?? 100))
+      const meanZ = lotteryMeanZByRoster.get(rId) ?? -0.5
+      condLotMu.set(rId, muM + rhoWinMaxPf * sdM * meanZ)
+      condLotSd.set(rId, Math.max(1, sdM * Math.sqrt(1 - 0.5 * rhoWinMaxPf * rhoWinMaxPf)))
+    }
+
+    for (const r of data.rosters) {
+      const rId = r.roster_id
+      const pLot_i = lotteryProbByRoster.get(rId) ?? 0
+      if (pLot_i <= 1e-8) continue
+      const picks = result.get(rId)!
+      const muM_i = condLotMu.get(rId)!
+      const sdM_i = condLotSd.get(rId)!
+
+      let otherLotSum = 0
+      for (const other of data.rosters) {
+        if (other.roster_id !== rId) {
+          otherLotSum += lotteryProbByRoster.get(other.roster_id) ?? 0
+        }
+      }
+      const targetOtherLot = Math.max(0, nonPlayoffCount - 1)
+      const lotDistribution = new Float64Array(nonPlayoffCount)
+
+      for (let q = 0; q < GAUSS_HERMITE_Z.length; q += 1) {
+        const wQ = GAUSS_HERMITE_W[q]
+        const mRealized = muM_i + GAUSS_HERMITE_Z[q] * sdM_i
+
+        // Select or weight the other teams by their conditional probability of accompanying Team i in the lottery.
+        const oppLowerMaxPfProbs: number[] = []
+        for (const other of data.rosters) {
+          const oId = other.roster_id
+          if (oId === rId) continue
+          const pLot_j = lotteryProbByRoster.get(oId) ?? 0
+          const condInLot_j = otherLotSum > 1e-6
+            ? Math.min(1, pLot_j * (targetOtherLot / otherLotSum))
+            : 0
+          if (condInLot_j <= 1e-6) continue
+          const pLower = normalCdf((mRealized - condLotMu.get(oId)!) / condLotSd.get(oId)!)
+          oppLowerMaxPfProbs.push(condInLot_j * pLower)
+        }
+
+        const lowerDist = convolvePoissonBinomial(oppLowerMaxPfProbs)
+        for (let k = 0; k < lowerDist.length; k += 1) {
+          const slotIdx = Math.min(nonPlayoffCount - 1, k)
+          lotDistribution[slotIdx] += wQ * lowerDist[k]
+        }
+      }
+
+      const lotSum = lotDistribution.reduce((a, b) => a + b, 0)
+      if (lotSum > 0) {
+        for (let lotIdx = 0; lotIdx < nonPlayoffCount; lotIdx += 1) {
+          picks[lotIdx] += pLot_i * (lotDistribution[lotIdx] / lotSum)
+        }
+      }
     }
   }
 
   for (const r of data.rosters) {
-    const rId = r.roster_id
-    const domProbs: number[] = []
-    for (const other of data.rosters) {
-      if (other.roster_id === rId) continue
-      domProbs.push(pairwiseDominance.get(rId)?.get(other.roster_id) ?? 0.5)
-    }
-    const rankDist = convolvePoissonBinomial(domProbs)
-
-    const picks = new Array(count).fill(0)
-    let lotteryProbTotal = 0
-
-    for (let k = 0; k < rankDist.length; k += 1) {
-      const p = rankDist[k]
-      if (p <= 1e-9) continue
-      const seed = count - k
-      if (seed <= playoffCount) {
-        const pickSlot = count - seed + 1
-        picks[pickSlot - 1] += p
-      } else {
-        lotteryProbTotal += p
-      }
-    }
-
-    if (lotteryProbTotal > 1e-9) {
-      const lotDomProbs: number[] = []
-      for (const other of data.rosters) {
-        if (other.roster_id === rId) continue
-        lotDomProbs.push(pairwiseLotteryDominance.get(rId)?.get(other.roster_id) ?? 0.5)
-      }
-      const lotRankDist = convolvePoissonBinomial(lotDomProbs)
-      for (let lotIdx = 0; lotIdx < nonPlayoffCount; lotIdx += 1) {
-        const lotProb = lotRankDist[count - 1 - lotIdx] ?? 0
-        picks[lotIdx] += lotteryProbTotal * lotProb
-      }
-    }
-
+    const picks = result.get(r.roster_id)!
     const sum = picks.reduce((a, b) => a + b, 0)
     if (sum > 0) {
       for (let i = 0; i < count; i += 1) picks[i] /= sum
     }
-    result.set(rId, picks)
   }
 
   const rosterIds = data.rosters.map((r) => r.roster_id)
@@ -1807,7 +2098,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     rw: CompiledRosterWeek,
     rosterId: number,
     model: ModelConfig,
-    fullIdioVarFactor: number,
+    corrVar: number,
     rng: RandomSource,
     computeMaxPf: boolean,
   ): { starterScore: number; maxPfScore: number } {
@@ -1833,16 +2124,17 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       }
       if (pw.state === 2) {
         scratchAvailable[i] = 1
-        const teamMult = pw.nflTeamIndex >= 0 ? nflTeamShocks[pw.nflTeamIndex] : 1
-        const inCorrVar = model.teamCorrSd * model.teamCorrSd * pw.remFraction
-        const inIdioFactor = Math.max(0.45, (1 - 0.35 * inCorrVar) / (1 + inCorrVar)) * model.dispersionScale
+        const rawTeamShock = pw.nflTeamIndex >= 0 ? nflTeamShocks[pw.nflTeamIndex] : 1
+        const teamMult = 1 + Math.sqrt(pw.remFraction) * (rawTeamShock - 1)
+        const inCorrVar = corrVar * pw.remFraction
         const remSim = samplePlayerRemainingPoints(
           pw,
           teamMult,
           1,
           model.sampler,
           milestoneWeights,
-          inIdioFactor,
+          inCorrVar,
+          model.dispersionScale,
           rng,
         )
         scratchExpected[i] = pw.lockedPoints + pw.remBaseMu + pw.expectedBonus
@@ -1879,7 +2171,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
         effectiveScale,
         model.sampler,
         milestoneWeights,
-        fullIdioVarFactor,
+        corrVar,
+        model.dispersionScale,
         rng,
       )
     }
@@ -1959,11 +2252,12 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   }
 
   const baseSeed = (Number(league.season) || 2026) * 100003 + data.currentWeek * 1009 + data.lastScoredWeek * 37
+  let totalWeightedSimulations = 0
 
   for (const [modelIndex, model] of MODELS.entries()) {
     const rng = createRandomSource(baseSeed + modelIndex * 7919)
     const corrVar = model.teamCorrSd * model.teamCorrSd
-    const fullIdioVarFactor = Math.max(0.45, (1 - 0.35 * corrVar) / (1 + corrVar)) * model.dispersionScale
+    totalWeightedSimulations += SIMULATIONS_PER_MODEL * model.priorWeight
 
     for (let run = 0; run < SIMULATIONS_PER_MODEL; run += 1) {
       initSeasonLatentState(model, rng)
@@ -2015,7 +2309,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
             rw,
             roster.roster_id,
             model,
-            fullIdioVarFactor,
+            corrVar,
             rng,
             true,
           )
@@ -2064,7 +2358,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       }
 
       for (const roster of data.rosters) {
-        stats.get(roster.roster_id)!.sumSimulatedMaxPf += simulatedMaxPf.get(roster.roster_id) ?? 0
+        stats.get(roster.roster_id)!.sumSimulatedMaxPf +=
+          (simulatedMaxPf.get(roster.roster_id) ?? 0) * model.priorWeight
       }
 
       const seeded = [...data.rosters].sort((a, b) => {
@@ -2119,6 +2414,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     baseFptsByRoster,
     baseMaxPfByRoster,
     slots,
+    slotInfo,
+    globalProfiles,
     count,
     nonPlayoffCount,
     hasLeagueMedianMatch,
@@ -2128,6 +2425,11 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     ...MODELS.map((model) => model.label),
     'Analytical Gaussian convolution',
   ]
+  const enginePriorWeights = [
+    ...MODELS.map((model) => model.priorWeight),
+    ANALYTICAL_ENGINE_PRIOR_WEIGHT,
+  ]
+  const totalEngineWeight = enginePriorWeights.reduce((sum, w) => sum + w, 0)
 
   const rawTeams = [...stats.values()].map((team) => {
     const modelProbabilities = MODELS.map((model) =>
@@ -2136,9 +2438,12 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     const analyticalProbs = analyticalProbabilities.get(team.roster.roster_id) ?? new Array(count).fill(0)
     const allEngineProbabilities = [...modelProbabilities, analyticalProbs]
 
-    const engineCount = allEngineProbabilities.length
     const probabilities = new Array(count).fill(0).map((_, pickIdx) => {
-      return allEngineProbabilities.reduce((sum, eng) => sum + (eng[pickIdx] ?? 0), 0) / engineCount
+      let weightedSum = 0
+      for (let engIdx = 0; engIdx < allEngineProbabilities.length; engIdx += 1) {
+        weightedSum += (allEngineProbabilities[engIdx][pickIdx] ?? 0) * enginePriorWeights[engIdx]
+      }
+      return weightedSum / totalEngineWeight
     })
 
     const probabilityRanges = probabilities.map((_, index) => ({
@@ -2154,7 +2459,7 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       roster: team.roster,
       name: team.name,
       record: ties ? `${wins}-${losses}-${ties}` : `${wins}-${losses}`,
-      maxPf: team.sumSimulatedMaxPf / TOTAL_SIMULATIONS,
+      maxPf: team.sumSimulatedMaxPf / Math.max(1, totalWeightedSimulations),
       currentMaxPf: baseMaxPfByRoster.get(team.roster.roster_id) ?? 0,
       pickHolder: holder ? teamName(data, holder) : `Team ${pickHolderId}`,
       pickHolderId,
