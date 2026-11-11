@@ -1279,6 +1279,22 @@ function convolvePoissonBinomial(probs: number[]): Float64Array {
   return dist
 }
 
+function convolveDiscreteDistributions(dists: readonly Float64Array[]): Float64Array {
+  let res = new Float64Array([1])
+  for (const d of dists) {
+    if (d.length === 0) continue
+    const next = new Float64Array(res.length + d.length - 1)
+    for (let i = 0; i < res.length; i += 1) {
+      if (res[i] === 0) continue
+      for (let j = 0; j < d.length; j += 1) {
+        next[i + j] += res[i] * d[j]
+      }
+    }
+    res = next
+  }
+  return res
+}
+
 function makeDoublyStochastic(matrix: number[][], maxIter = 50): number[][] {
   const n = matrix.length
   if (n <= 1) return matrix
@@ -1340,7 +1356,7 @@ function computeAnalyticalProbabilities(
   const totalStarterVar = new Map<number, number>()
   const totalMaxPfMu = new Map<number, number>()
   const totalMaxPfVar = new Map<number, number>()
-  const winProbsByRoster = new Map<number, number[]>()
+  const weeklyWinDistsByRoster = new Map<number, Float64Array[]>()
 
   for (const r of data.rosters) {
     baseWins.set(r.roster_id, num(r.settings.wins) + num(r.settings.ties) * 0.5)
@@ -1348,7 +1364,7 @@ function computeAnalyticalProbabilities(
     totalStarterVar.set(r.roster_id, 0)
     totalMaxPfMu.set(r.roster_id, baseMaxPfByRoster.get(r.roster_id) ?? 0)
     totalMaxPfVar.set(r.roster_id, 0)
-    winProbsByRoster.set(r.roster_id, [])
+    weeklyWinDistsByRoster.set(r.roster_id, [])
   }
 
   const teamCorrVar = 0.18 * 0.18
@@ -1360,6 +1376,7 @@ function computeAnalyticalProbabilities(
 
     const weekStarterMu = new Map<number, number>()
     const weekStarterSd = new Map<number, number>()
+    const teamRemSumByRoster = new Map<number, Map<number, number>>()
 
     for (const r of data.rosters) {
       const rw = weekRosters.get(r.roster_id)
@@ -1509,6 +1526,7 @@ function computeAnalyticalProbabilities(
 
       weekStarterMu.set(r.roster_id, sMu)
       weekStarterSd.set(r.roster_id, Math.sqrt(Math.max(1, sVar)))
+      teamRemSumByRoster.set(r.roster_id, teamRemSum)
 
       totalStarterMu.set(r.roster_id, (totalStarterMu.get(r.roster_id) ?? 0) + sMu)
       totalStarterVar.set(r.roster_id, (totalStarterVar.get(r.roster_id) ?? 0) + sVar)
@@ -1516,30 +1534,118 @@ function computeAnalyticalProbabilities(
       totalMaxPfVar.set(r.roster_id, (totalMaxPfVar.get(r.roster_id) ?? 0) + mVar)
     }
 
+    let medMu = 0
+    let medVar = 14 * 14
+    if (hasLeagueMedianMatch && count >= 2) {
+      const allMeans = [...weekStarterMu.values()].sort((a, b) => a - b)
+      const mid = count >>> 1
+      medMu = count % 2 === 0 ? (allMeans[mid - 1] + allMeans[mid]) * 0.5 : allMeans[mid]
+      const avgVar = [...weekStarterSd.values()].reduce((acc, s) => acc + s * s, 0) / count
+      // Order-statistic variance of sample median for N teams: pi / (2N) * sigma^2.
+      medVar = (Math.PI / (2 * count)) * avgVar
+    }
+
+    const processedRosters = new Set<number>()
+
     for (const [firstId, secondId] of weekPairs.get(week) ?? []) {
+      processedRosters.add(firstId)
+      processedRosters.add(secondId)
+
       const mu1 = weekStarterMu.get(firstId) ?? 0
       const sd1 = weekStarterSd.get(firstId) ?? 15
       const mu2 = weekStarterMu.get(secondId) ?? 0
       const sd2 = weekStarterSd.get(secondId) ?? 15
-      const pooledSd = Math.sqrt(sd1 * sd1 + sd2 * sd2)
-      const p1 = normalCdf((mu1 - mu2) / Math.max(0.1, pooledSd))
-      winProbsByRoster.get(firstId)?.push(p1)
-      winProbsByRoster.get(secondId)?.push(1 - p1)
+
+      // Cross-roster matchup covariance from shared NFL team players: -2Cov(S_A, S_B)
+      let cov12 = 0
+      const rem1 = teamRemSumByRoster.get(firstId)
+      const rem2 = teamRemSumByRoster.get(secondId)
+      if (rem1 && rem2) {
+        for (const [tIdx, s1] of rem1.entries()) {
+          const s2 = rem2.get(tIdx)
+          if (s2) cov12 += teamCorrVar * s1 * s2
+        }
+      }
+
+      const diffVar = Math.max(1, sd1 * sd1 + sd2 * sd2 - 2 * cov12)
+      const diffSd = Math.sqrt(diffVar)
+
+      if (hasLeagueMedianMatch && count >= 2) {
+        // Exact trinomial joint distribution over {0, 1, 2} wins integrating over team's score s_q:
+        // P(s > S_opp) and P(s > M) are conditionally independent given s.
+        let p2_1 = 0
+        let p0_1 = 0
+        const condSd2_given1 = Math.max(1, Math.sqrt(Math.max(1, sd2 * sd2 - (cov12 * cov12) / (sd1 * sd1))))
+        const condSdMed_given1 = Math.max(1, Math.sqrt(Math.max(1, medVar - (sd1 * sd1) / (count * count))))
+
+        for (let q = 0; q < GAUSS_HERMITE_Z.length; q += 1) {
+          const wQ = GAUSS_HERMITE_W[q]
+          const zQ = GAUSS_HERMITE_Z[q]
+          const s1 = mu1 + sd1 * zQ
+          const condMu2 = mu2 + (cov12 / (sd1 * sd1)) * (s1 - mu1)
+          const condMuMed = medMu + (1 / count) * (s1 - mu1)
+
+          const pBeat2 = normalCdf((s1 - condMu2) / condSd2_given1)
+          const pBeatMed = normalCdf((s1 - condMuMed) / condSdMed_given1)
+
+          p2_1 += wQ * (pBeat2 * pBeatMed)
+          p0_1 += wQ * ((1 - pBeat2) * (1 - pBeatMed))
+        }
+        let p1_1 = Math.max(0, 1 - p2_1 - p0_1)
+        const sum1 = p0_1 + p1_1 + p2_1
+        if (sum1 > 0) {
+          p0_1 /= sum1
+          p1_1 /= sum1
+          p2_1 /= sum1
+        }
+        weeklyWinDistsByRoster.get(firstId)?.push(new Float64Array([p0_1, p1_1, p2_1]))
+
+        // Symmetrically for second team
+        let p2_2 = 0
+        let p0_2 = 0
+        const condSd1_given2 = Math.max(1, Math.sqrt(Math.max(1, sd1 * sd1 - (cov12 * cov12) / (sd2 * sd2))))
+        const condSdMed_given2 = Math.max(1, Math.sqrt(Math.max(1, medVar - (sd2 * sd2) / (count * count))))
+
+        for (let q = 0; q < GAUSS_HERMITE_Z.length; q += 1) {
+          const wQ = GAUSS_HERMITE_W[q]
+          const zQ = GAUSS_HERMITE_Z[q]
+          const s2 = mu2 + sd2 * zQ
+          const condMu1 = mu1 + (cov12 / (sd2 * sd2)) * (s2 - mu2)
+          const condMuMed = medMu + (1 / count) * (s2 - mu2)
+
+          const pBeat1 = normalCdf((s2 - condMu1) / condSd1_given2)
+          const pBeatMed = normalCdf((s2 - condMuMed) / condSdMed_given2)
+
+          p2_2 += wQ * (pBeat1 * pBeatMed)
+          p0_2 += wQ * ((1 - pBeat1) * (1 - pBeatMed))
+        }
+        let p1_2 = Math.max(0, 1 - p2_2 - p0_2)
+        const sum2 = p0_2 + p1_2 + p2_2
+        if (sum2 > 0) {
+          p0_2 /= sum2
+          p1_2 /= sum2
+          p2_2 /= sum2
+        }
+        weeklyWinDistsByRoster.get(secondId)?.push(new Float64Array([p0_2, p1_2, p2_2]))
+      } else {
+        const p1 = normalCdf((mu1 - mu2) / diffSd)
+        weeklyWinDistsByRoster.get(firstId)?.push(new Float64Array([1 - p1, p1]))
+        weeklyWinDistsByRoster.get(secondId)?.push(new Float64Array([p1, 1 - p1]))
+      }
     }
 
-    if (hasLeagueMedianMatch && count >= 2) {
-      const allMeans = [...weekStarterMu.values()].sort((a, b) => a - b)
-      const mid = count >>> 1
-      const medMu = count % 2 === 0 ? (allMeans[mid - 1] + allMeans[mid]) * 0.5 : allMeans[mid]
-      const avgVar = [...weekStarterSd.values()].reduce((acc, s) => acc + s * s, 0) / count
-      // Order-statistic variance of sample median for N teams: pi / (2N) * sigma^2.
-      const medVar = (Math.PI / (2 * count)) * avgVar
-      for (const r of data.rosters) {
-        const mu = weekStarterMu.get(r.roster_id) ?? 0
-        const sd = weekStarterSd.get(r.roster_id) ?? 15
-        const pooledSd = Math.sqrt(Math.max(1, sd * sd + medVar - (2 * sd * sd) / count))
-        const pMed = normalCdf((mu - medMu) / pooledSd)
-        winProbsByRoster.get(r.roster_id)?.push(pMed)
+    // Process any unpaired teams (e.g. bye weeks)
+    for (const r of data.rosters) {
+      if (!processedRosters.has(r.roster_id)) {
+        if (hasLeagueMedianMatch && count >= 2) {
+          const mu = weekStarterMu.get(r.roster_id) ?? 0
+          const sd = weekStarterSd.get(r.roster_id) ?? 15
+          const pooledSd = Math.sqrt(Math.max(1, sd * sd + medVar - (2 * sd * sd) / count))
+          const pMed = normalCdf((mu - medMu) / pooledSd)
+          weeklyWinDistsByRoster.get(r.roster_id)?.push(new Float64Array([1 - pMed, pMed]))
+        } else {
+          weeklyWinDistsByRoster.get(r.roster_id)?.push(new Float64Array([1]))
+        }
       }
     }
   }
@@ -1549,16 +1655,24 @@ function computeAnalyticalProbabilities(
   const winSdByRoster = new Map<number, number>()
 
   for (const r of data.rosters) {
-    const probs = winProbsByRoster.get(r.roster_id) ?? []
-    const remDist = convolvePoissonBinomial(probs)
+    const weeklyDists = weeklyWinDistsByRoster.get(r.roster_id) ?? []
+    const remDist = convolveDiscreteDistributions(weeklyDists)
     const bW = Math.round(baseWins.get(r.roster_id) ?? 0)
     const fullDist = new Float64Array(bW + remDist.length)
+
     let meanW = bW
     let varW = 0
-    for (const p of probs) {
-      meanW += p
-      varW += p * (1 - p)
+    for (const d of weeklyDists) {
+      let e1 = 0
+      let e2 = 0
+      for (let k = 0; k < d.length; k += 1) {
+        e1 += k * d[k]
+        e2 += k * k * d[k]
+      }
+      meanW += e1
+      varW += Math.max(0, e2 - e1 * e1)
     }
+
     for (let k = 0; k < remDist.length; k += 1) {
       fullDist[bW + k] = remDist[k]
     }
@@ -1868,8 +1982,15 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
           const liveAvail = lockedPoints > 0
             ? 1
             : (activeInGame ? liveInGamePlayProbability(injuryTier) : 0)
-          remBaseMu = baseMu * remFraction * liveAvail
-          expectedBonus = expBonus * remFraction * liveAvail
+
+          // In-game conjugate Gamma-Poisson rate update: E[rate | y, p] = (mu_0 + eta * y) / (1 + eta * p)
+          const eta = 0.35
+          const updatedRate = (baseMu + eta * lockedPoints) / (1 + eta * progress)
+          const clampedRate = Math.max(0.20 * baseMu, Math.min(2.50 * baseMu, updatedRate))
+
+          remBaseMu = clampedRate * remFraction * liveAvail
+          const bonusRateScale = baseMu > 0.1 ? clampedRate / baseMu : 1
+          expectedBonus = expBonus * bonusRateScale * remFraction * liveAvail
         }
 
         const canEverPlayThisWeek = !(weeksAhead === 0 && (injuryTier === 'ir' || injuryTier === 'out'))

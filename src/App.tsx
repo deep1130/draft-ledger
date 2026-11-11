@@ -243,7 +243,7 @@ function App() {
                   ? ' Big-play bonuses (like 100-yard rushing/receiving or 300-yard passing milestones) are calculated using upper-tail probabilities under continuous '
                   : ' Standard yardage and touchdown scoring apply without milestone bonuses. '}{' '}
                 {hasMilestoneBonuses ? <a href="https://en.wikipedia.org/wiki/Gamma_distribution" target="_blank" rel="noopener noreferrer">Gamma distribution</a> : null}{hasMilestoneBonuses ? ' curves. ' : ''}
-                Completed games lock in actual player scores permanently. Games currently in progress project remaining stats based on time left on the clock, while future games simulate full-game outcomes.
+                Completed games lock in actual player scores permanently. Games currently in progress project remaining stats using Bayesian in-game usage updating and non-linear NFL quarter scoring pacing, while future games simulate full-game outcomes.
               </p>
             </div>
 
@@ -499,7 +499,7 @@ Discrete recursion:
 P_m(k) = P_{m-1}(k) * (1 - p_m) + P_{m-1}(k - 1) * p_m`}
                   </div>
                   <p>
-                    Over N remaining regular season weeks with heterogeneous win probabilities {'{'}p_1, ..., p_N{'}'}, total wins W follow a Poisson-Binomial distribution. Rather than approximating via standard binomial models (which falsely assume identical odds), the exact probability mass function is calculated by polynomial convolution in O(N²) time.
+                    Over N remaining regular season weeks with heterogeneous win probabilities, total wins W follow an exact discrete distribution. In leagues with weekly median matches, each week's joint outcome over {'{'}0, 1, 2{'}'} wins is integrated via Gauss-Hermite quadrature to capture sweep correlation between head-to-head and median results, and convolved across the remaining schedule.
                   </p>
                   <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
                     <span>Read Wikipedia: Poisson binomial distribution</span>

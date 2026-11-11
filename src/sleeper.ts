@@ -306,13 +306,25 @@ async function getWeekFeed(leagueId: string, season: string, week: number): Prom
     const state = competition?.status?.type?.state
     const period = competition?.status?.period ?? 0
     const secondsLeft = Math.min(900, Math.max(0, parseClockSeconds(competition?.status?.displayClock)))
-    const progress = state === 'post'
-      ? 1
-      : state === 'in'
-        ? (period >= 5
-          ? 0.98
-          : Math.min(0.98, Math.max(0, ((Math.min(Math.max(period, 1), 4) - 1) * 900 + (900 - secondsLeft)) / 3600)))
-        : 0
+    const quarterFraction = Math.min(1, Math.max(0, (900 - secondsLeft) / 900))
+    let progress = 0
+    if (state === 'post') {
+      progress = 1
+    } else if (state === 'in') {
+      if (period >= 5) {
+        progress = 0.98
+      } else if (period === 4) {
+        // NFL 4th quarter has high scoring density (~30% of total game points from hurry-up and comeback scripts).
+        progress = Math.min(0.98, 0.70 + 0.30 * quarterFraction)
+      } else if (period === 3) {
+        progress = 0.48 + 0.22 * quarterFraction
+      } else if (period === 2) {
+        // NFL 2nd quarter contains the 2-minute drill (~28% of game scoring).
+        progress = 0.20 + 0.28 * quarterFraction
+      } else {
+        progress = 0.00 + 0.20 * quarterFraction
+      }
+    }
     for (const competitor of competition?.competitors ?? []) {
       const abbreviation = normalizeNflTeam(competitor.team?.abbreviation)
       if (abbreviation && state) {
