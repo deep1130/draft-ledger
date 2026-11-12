@@ -3,6 +3,7 @@ import {
   playerFitsSlot,
   selectOptimalLineup,
   starterSlotsForLeague,
+  upcomingRookieSeason,
   type LeagueData,
   type SleeperPlayer,
   type SleeperRoster,
@@ -1853,22 +1854,15 @@ function assignBijectiveDraftPicks<T extends { probabilities: number[]; maxPf: n
     return { team, lotteryProb, expectedPick }
   })
 
-  const byLotteryLikelihood = [...enriched].sort(
+  // By the Rearrangement Inequality, sorting by expectedPick ascending minimizes sum_i (pick_i - E[Pick_i])^2
+  // across all N! permutations and guarantees monotonically non-decreasing xPick down the board.
+  const ordered = [...enriched].sort(
     (a, b) =>
-      b.lotteryProb - a.lotteryProb ||
       a.expectedPick - b.expectedPick ||
+      b.lotteryProb - a.lotteryProb ||
       a.team.maxPf - b.team.maxPf,
   )
 
-  const lotteryGroup = byLotteryLikelihood
-    .slice(0, nonPlayoffCount)
-    .sort((a, b) => a.expectedPick - b.expectedPick || a.team.maxPf - b.team.maxPf)
-
-  const playoffGroup = byLotteryLikelihood
-    .slice(nonPlayoffCount)
-    .sort((a, b) => a.expectedPick - b.expectedPick || a.team.maxPf - b.team.maxPf)
-
-  const ordered = [...lotteryGroup, ...playoffGroup]
   return ordered.map((entry, index) => ({
     ...entry.team,
     pick: index + 1,
@@ -2519,11 +2513,70 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     }
   }
 
+  const targetRookieSeason = upcomingRookieSeason(league)
   const pickOwners = new Map<number, number>()
   for (const pick of data.tradedPicks) {
-    if (Number(pick.season) === Number(league.season) + 1 && pick.round === 1) {
+    if (Number(pick.season) === targetRookieSeason && pick.round === 1) {
       pickOwners.set(pick.roster_id, pick.owner_id)
     }
+  }
+
+  const allEngineLabels = [
+    ...MODELS.map((model) => model.label),
+    'Analytical Gaussian convolution',
+  ]
+
+  // If the regular season is already completed (firstSimWeek > regularEnd), draft order is locked deterministically.
+  if (firstSimWeek > regularEnd) {
+    const seeded = [...data.rosters].sort((a, b) => {
+      const aWins = num(a.settings.wins) + num(a.settings.ties) * 0.5
+      const bWins = num(b.settings.wins) + num(b.settings.ties) * 0.5
+      const aPts = baseFptsByRoster.get(a.roster_id) ?? 0
+      const bPts = baseFptsByRoster.get(b.roster_id) ?? 0
+      const aMax = baseMaxPfByRoster.get(a.roster_id) ?? 0
+      const bMax = baseMaxPfByRoster.get(b.roster_id) ?? 0
+      return bWins - aWins || bPts - aPts || bMax - aMax
+    })
+
+    const playoff = seeded.slice(0, playoffTeams)
+    const playoffSet = new Set(playoff.map((r) => r.roster_id))
+    const eliminated = data.rosters
+      .filter((r) => !playoffSet.has(r.roster_id))
+      .sort((a, b) => (baseMaxPfByRoster.get(a.roster_id) ?? 0) - (baseMaxPfByRoster.get(b.roster_id) ?? 0))
+
+    const lockedSlotByRoster = new Map<number, number>()
+    playoff.forEach((r, idx) => lockedSlotByRoster.set(r.roster_id, count - idx))
+    eliminated.forEach((r, idx) => lockedSlotByRoster.set(r.roster_id, idx + 1))
+
+    return data.rosters
+      .map((roster) => {
+        const slot = lockedSlotByRoster.get(roster.roster_id) ?? 1
+        const probabilities = new Array(count).fill(0)
+        probabilities[slot - 1] = 1
+        const probabilityRanges = probabilities.map((p) => ({ low: p, high: p }))
+        const pickHolderId = pickOwners.get(roster.roster_id) ?? roster.roster_id
+        const holder = data.rosters.find((item) => item.roster_id === pickHolderId)
+        const wins = num(roster.settings.wins)
+        const losses = num(roster.settings.losses)
+        const ties = num(roster.settings.ties)
+        const currMax = baseMaxPfByRoster.get(roster.roster_id) ?? 0
+        return {
+          roster,
+          name: teamName(data, roster),
+          record: ties ? `${wins}-${losses}-${ties}` : `${wins}-${losses}`,
+          maxPf: currMax,
+          currentMaxPf: currMax,
+          pick: slot,
+          expectedPick: slot,
+          pickHolder: holder ? teamName(data, holder) : `Team ${pickHolderId}`,
+          pickHolderId,
+          probabilities,
+          probabilityRanges,
+          modelNames: allEngineLabels,
+          simulationCount: TOTAL_SIMULATIONS,
+        }
+      })
+      .sort((a, b) => a.pick - b.pick)
   }
 
   const analyticalProbabilities = computeAnalyticalProbabilities(
@@ -2542,10 +2595,6 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     hasLeagueMedianMatch,
   )
 
-  const allEngineLabels = [
-    ...MODELS.map((model) => model.label),
-    'Analytical Gaussian convolution',
-  ]
   const enginePriorWeights = [
     ...MODELS.map((model) => model.priorWeight),
     ANALYTICAL_ENGINE_PRIOR_WEIGHT,
@@ -2594,7 +2643,15 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
   const rawMatrix = rawTeams.map((team) => team.probabilities)
   const normalizedMatrix = makeDoublyStochastic(rawMatrix)
   rawTeams.forEach((team, idx) => {
-    team.probabilities = normalizedMatrix[idx]
+    const probs = normalizedMatrix[idx]
+    team.probabilities = probs
+    team.probabilityRanges = team.probabilityRanges.map((range, pickIdx) => {
+      const p = probs[pickIdx] ?? 0
+      return {
+        low: Math.min(range.low, p),
+        high: Math.max(range.high, p),
+      }
+    })
   })
 
   return assignBijectiveDraftPicks(rawTeams, nonPlayoffCount)

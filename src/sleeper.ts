@@ -68,16 +68,6 @@ export interface Matchup {
   custom_points?: number | null
 }
 
-export interface BracketMatch {
-  r: number
-  m: number
-  t1: number | null
-  t2: number | null
-  w: number | null
-  l: number | null
-  p?: number
-}
-
 export interface WeekFeed {
   matchups: Matchup[]
   projections: Record<string, StatLine>
@@ -86,22 +76,34 @@ export interface WeekFeed {
   gameProgress: Record<string, number>
 }
 
+export interface UserLeagueSummary {
+  league_id: string
+  name: string
+  season: string
+  total_rosters: number
+  status: string
+  isDynasty: boolean
+}
+
 export interface LeagueData {
   league: SleeperLeague
   rosters: SleeperRoster[]
   users: SleeperUser[]
   players: Record<string, SleeperPlayer>
   tradedPicks: TradedPick[]
-  winnersBracket: BracketMatch[]
   currentWeek: number
   lastScoredWeek: number
   weeks: Record<number, WeekFeed>
-  historicalScores: Record<number, number[]>
   historicalMaxPf: Record<number, number[]>
   historicalTeamScores: Record<number, number[]>
   historicalPlayerPoints: Record<string, number[]>
   historicalPlayerWeeks: Record<string, number[]>
   lastUpdated: number
+}
+
+export function upcomingRookieSeason(league: Pick<SleeperLeague, 'season' | 'status'>): number {
+  const base = Number(league.season) || new Date().getFullYear()
+  return league.status === 'pre_draft' || league.status === 'drafting' ? base : base + 1
 }
 
 interface NflState {
@@ -260,17 +262,37 @@ function parseClockSeconds(displayClock?: string): number {
 }
 
 const SLEEPER_API = 'https://api.sleeper.app/v1'
-const PLAYER_CACHE_KEY = 'draft-order-player-index-v1'
+const LEGACY_PLAYER_CACHE_KEY = 'draft-order-player-index-v1'
+const PLAYER_CACHE_KEY = 'draft-order-player-index-v2'
 const PLAYER_CACHE_MAX_AGE = 24 * 60 * 60 * 1000
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal })
   if (!response.ok) throw new Error(`Request failed (${response.status}): ${url}`)
   return response.json() as Promise<T>
 }
 
-async function getPlayerIndex(): Promise<Record<string, SleeperPlayer>> {
+function compactPlayerIndex(raw: Record<string, SleeperPlayer>): Record<string, SleeperPlayer> {
+  const compact: Record<string, SleeperPlayer> = {}
+  for (const [id, p] of Object.entries(raw)) {
+    if (!p) continue
+    const entry: SleeperPlayer = { player_id: id }
+    if (p.full_name) entry.full_name = p.full_name
+    if (p.team) entry.team = p.team
+    if (p.position) entry.position = p.position
+    if (p.fantasy_positions?.length) entry.fantasy_positions = p.fantasy_positions
+    if (p.injury_status) entry.injury_status = p.injury_status
+    if (p.status) entry.status = p.status
+    if (typeof p.years_exp === 'number') entry.years_exp = p.years_exp
+    if (typeof p.age === 'number') entry.age = p.age
+    compact[id] = entry
+  }
+  return compact
+}
+
+async function getPlayerIndex(signal?: AbortSignal): Promise<Record<string, SleeperPlayer>> {
   try {
+    localStorage.removeItem(LEGACY_PLAYER_CACHE_KEY)
     const stored = localStorage.getItem(PLAYER_CACHE_KEY)
     if (stored) {
       const cached = JSON.parse(stored) as { savedAt: number; players: Record<string, SleeperPlayer> }
@@ -280,21 +302,54 @@ async function getPlayerIndex(): Promise<Record<string, SleeperPlayer>> {
     localStorage.removeItem(PLAYER_CACHE_KEY)
   }
 
-  const players = await getJson<Record<string, SleeperPlayer>>(`${SLEEPER_API}/players/nfl?active=true`)
+  const rawPlayers = await getJson<Record<string, SleeperPlayer>>(`${SLEEPER_API}/players/nfl?active=true`, signal)
+  const players = compactPlayerIndex(rawPlayers)
   try {
     localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), players }))
   } catch {
-    // The full index can exceed a browser's local storage quota.
+    // Fallback gracefully if storage quota is unavailable.
   }
   return players
 }
 
-async function getWeekFeed(leagueId: string, season: string, week: number): Promise<WeekFeed> {
+export async function fetchUserLeagues(usernameOrId: string, signal?: AbortSignal): Promise<UserLeagueSummary[]> {
+  const cleaned = usernameOrId.trim().replace(/^@/, '')
+  if (!cleaned) return []
+  const user = await getJson<{ user_id?: string; display_name?: string } | null>(
+    `${SLEEPER_API}/user/${encodeURIComponent(cleaned)}`,
+    signal,
+  )
+  if (!user?.user_id) {
+    throw new Error(`Sleeper user "${cleaned}" not found.`)
+  }
+  const nflState = await getJson<NflState>(`${SLEEPER_API}/state/nfl`, signal)
+  const season = nflState.league_season || nflState.season || String(new Date().getFullYear())
+  const leagues = await getJson<SleeperLeague[]>(
+    `${SLEEPER_API}/user/${user.user_id}/leagues/nfl/${season}`,
+    signal,
+  )
+  return (leagues ?? [])
+    .map((league) => ({
+      league_id: league.league_id,
+      name: league.name,
+      season: league.season || season,
+      total_rosters: league.total_rosters,
+      status: league.status,
+      isDynasty: Number(league.settings?.type) === 2,
+    }))
+    .sort((a, b) => Number(b.isDynasty) - Number(a.isDynasty) || a.name.localeCompare(b.name))
+}
+
+async function getWeekFeed(leagueId: string, season: string, week: number, signal?: AbortSignal): Promise<WeekFeed> {
   const scoreboardUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&year=${season}`
+  const catchNonAbort = <T,>(fallback: T) => (err: unknown): T => {
+    if (signal?.aborted) throw err
+    return fallback
+  }
   const [matchups, projections, scoreboard] = await Promise.all([
-    getJson<Matchup[]>(`${SLEEPER_API}/league/${leagueId}/matchups/${week}`).catch(() => []),
-    getJson<Record<string, StatLine>>(`${SLEEPER_API}/projections/nfl/regular/${season}/${week}?season_type=regular`).catch(() => ({})),
-    getJson<EspnScoreboard>(scoreboardUrl).catch((): EspnScoreboard => ({})),
+    getJson<Matchup[]>(`${SLEEPER_API}/league/${leagueId}/matchups/${week}`, signal).catch(catchNonAbort<Matchup[]>([])),
+    getJson<Record<string, StatLine>>(`${SLEEPER_API}/projections/nfl/regular/${season}/${week}?season_type=regular`, signal).catch(catchNonAbort<Record<string, StatLine>>({})),
+    getJson<EspnScoreboard>(scoreboardUrl, signal).catch(catchNonAbort<EspnScoreboard>({})),
   ])
   const byes = (scoreboard.week?.teamsOnBye ?? [])
     .map((team) => normalizeNflTeam(team.abbreviation))
@@ -336,14 +391,13 @@ async function getWeekFeed(leagueId: string, season: string, week: number): Prom
   return { matchups, projections, byes, gameStates, gameProgress }
 }
 
-export async function loadLeagueData(leagueId: string): Promise<LeagueData> {
-  const [league, rosters, users, tradedPicks, winnersBracket, nflState] = await Promise.all([
-    getJson<SleeperLeague>(`${SLEEPER_API}/league/${leagueId}`),
-    getJson<SleeperRoster[]>(`${SLEEPER_API}/league/${leagueId}/rosters`),
-    getJson<SleeperUser[]>(`${SLEEPER_API}/league/${leagueId}/users`),
-    getJson<TradedPick[]>(`${SLEEPER_API}/league/${leagueId}/traded_picks`),
-    getJson<BracketMatch[]>(`${SLEEPER_API}/league/${leagueId}/winners_bracket`).catch((): BracketMatch[] => []),
-    getJson<NflState>(`${SLEEPER_API}/state/nfl`),
+export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Promise<LeagueData> {
+  const [league, rosters, users, tradedPicks, nflState] = await Promise.all([
+    getJson<SleeperLeague>(`${SLEEPER_API}/league/${leagueId}`, signal),
+    getJson<SleeperRoster[]>(`${SLEEPER_API}/league/${leagueId}/rosters`, signal),
+    getJson<SleeperUser[]>(`${SLEEPER_API}/league/${leagueId}/users`, signal),
+    getJson<TradedPick[]>(`${SLEEPER_API}/league/${leagueId}/traded_picks`, signal),
+    getJson<NflState>(`${SLEEPER_API}/state/nfl`, signal),
   ])
   const season = league.season || nflState.league_season || nflState.season || String(new Date().getFullYear())
   const currentWeek = Math.min(18, Math.max(1, nflState.week ?? (Number(league.settings.leg) || 1)))
@@ -352,27 +406,27 @@ export async function loadLeagueData(leagueId: string): Promise<LeagueData> {
     ? Math.min(18, rawLastScored)
     : Math.max(0, currentWeek - 1)
   const playoffStart = Number(league.settings.playoff_week_start) || 15
-  const firstActiveWeek = Math.min(18, Math.max(1, Math.min(currentWeek, lastScoredWeek + 1)))
-  const lastWeek = Math.min(18, Math.max(currentWeek, playoffStart + 2))
-  const completedCount = Math.min(18, Math.max(0, lastScoredWeek))
+  const regularEnd = Math.min(18, Math.max(1, playoffStart - 1))
+  const firstActiveWeek = Math.max(1, lastScoredWeek + 1)
+  const lastWeek = regularEnd
+  const completedCount = Math.min(regularEnd, Math.max(0, lastScoredWeek))
 
   const [weekEntries, historicEntries, players] = await Promise.all([
     Promise.all(Array.from({ length: Math.max(0, lastWeek - firstActiveWeek + 1) }, async (_, index) => {
       const week = firstActiveWeek + index
-      return [week, await getWeekFeed(leagueId, season, week)] as const
+      return [week, await getWeekFeed(leagueId, season, week, signal)] as const
     })),
     Promise.all(Array.from({ length: completedCount }, async (_, index) => {
       const week = index + 1
-      const matchups = await getJson<Matchup[]>(`${SLEEPER_API}/league/${leagueId}/matchups/${week}`).catch(() => [])
+      const matchups = await getJson<Matchup[]>(`${SLEEPER_API}/league/${leagueId}/matchups/${week}`, signal).catch((err) => {
+        if (signal?.aborted) throw err
+        return [] as Matchup[]
+      })
       return [week, matchups] as const
     })),
-    getPlayerIndex(),
+    getPlayerIndex(signal),
   ])
 
-  const historicalScores = Object.fromEntries(historicEntries.map(([week, matchups]) => [
-    week,
-    matchups.map((matchup) => matchup.custom_points ?? matchup.points).filter(Number.isFinite),
-  ]))
   const historicalMaxPf = Object.fromEntries(rosters.map((roster) => [
     roster.roster_id,
     historicEntries.flatMap(([, matchups]) => {
@@ -414,11 +468,9 @@ export async function loadLeagueData(leagueId: string): Promise<LeagueData> {
     users,
     players,
     tradedPicks,
-    winnersBracket,
     currentWeek,
     lastScoredWeek,
     weeks: Object.fromEntries(weekEntries),
-    historicalScores,
     historicalMaxPf,
     historicalTeamScores,
     historicalPlayerPoints,

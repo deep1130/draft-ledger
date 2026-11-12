@@ -1,12 +1,54 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownUp, ArrowUpRight, Calculator, Check, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
 import { projectDraftOrder } from './projection'
-import { loadLeagueData, type LeagueData } from './sleeper'
+import { fetchUserLeagues, loadLeagueData, upcomingRookieSeason, type LeagueData, type UserLeagueSummary } from './sleeper'
 import './App.css'
 
 type View = 'order' | 'assets'
+interface RecentLeague {
+  id: string
+  name: string
+  season: string
+}
+
+const RECENT_LEAGUES_KEY = 'draft-ledger-recent-leagues-v1'
+const MAX_RECENT_LEAGUES = 5
+const DEFAULT_ROOKIE_YEAR = new Date().getFullYear() + 1
 const formatNumber = (value: number) => value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-const formatChance = (chance: number) => chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
+const formatChance = (chance: number) => chance >= 0.9999 ? '100%' : chance >= 0.995 ? '99%+' : chance === 0 ? '0%' : chance < 0.005 ? '<0.5%' : `${Math.round(chance * 100)}%`
+
+function isAbortError(reason: unknown): boolean {
+  return (reason instanceof DOMException && reason.name === 'AbortError')
+    || (reason instanceof Error && reason.name === 'AbortError')
+}
+
+function readRecentLeagues(): RecentLeague[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(RECENT_LEAGUES_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is RecentLeague =>
+        Boolean(item) && typeof item === 'object'
+        && typeof (item as RecentLeague).id === 'string'
+        && typeof (item as RecentLeague).name === 'string'
+        && typeof (item as RecentLeague).season === 'string'
+    ).slice(0, MAX_RECENT_LEAGUES)
+  } catch {
+    return []
+  }
+}
+
+function writeRecentLeagues(entries: RecentLeague[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(RECENT_LEAGUES_KEY, JSON.stringify(entries.slice(0, MAX_RECENT_LEAGUES)))
+  } catch {
+    // Ignore storage quota / privacy mode errors
+  }
+}
 
 function getInitialLeagueId(): string {
   if (typeof window !== 'undefined') {
@@ -24,7 +66,7 @@ function teamName(data: LeagueData, roster: LeagueData['rosters'][number]): stri
 }
 
 function App() {
-  const initialId = useMemo(getInitialLeagueId, [])
+  const initialId = useMemo(() => getInitialLeagueId(), [])
   const [leagueId, setLeagueId] = useState(initialId)
   const [data, setData] = useState<LeagueData | null>(null)
   const [busy, setBusy] = useState(Boolean(initialId))
@@ -33,35 +75,108 @@ function App() {
   const [search, setSearch] = useState('')
   const [lastUpdated, setLastUpdated] = useState<number | null>(null)
   const [copied, setCopied] = useState(false)
+  const [recentLeagues, setRecentLeagues] = useState<RecentLeague[]>(() => readRecentLeagues())
+  const [userLeagues, setUserLeagues] = useState<UserLeagueSummary[]>([])
+  const [resolvedUserLabel, setResolvedUserLabel] = useState('')
+  const abortRef = useRef<AbortController | null>(null)
 
-  async function refresh(targetId?: string) {
-    const activeId = (targetId ?? leagueId).trim()
-    if (!activeId) {
-      setError('Please enter a Sleeper League ID.')
-      setBusy(false)
-      return
+  const recordRecentLeague = useCallback((next: LeagueData) => {
+    const entry: RecentLeague = {
+      id: next.league.league_id,
+      name: next.league.name || `League ${next.league.league_id}`,
+      season: next.league.season,
     }
+    setRecentLeagues((prev) => {
+      const merged = [entry, ...prev.filter((item) => item.id !== entry.id)].slice(0, MAX_RECENT_LEAGUES)
+      writeRecentLeagues(merged)
+      return merged
+    })
+  }, [])
+
+  const loadLeagueById = useCallback(async (rawId: string, clearUserPicker = false) => {
+    const activeId = rawId.trim()
+    if (!activeId) return
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    if (clearUserPicker) {
+      setUserLeagues([])
+      setResolvedUserLabel('')
+    }
+    setLeagueId(activeId)
     setBusy(true)
     setError('')
     try {
-      const next = await loadLeagueData(activeId)
+      const next = await loadLeagueData(activeId, controller.signal)
+      if (controller.signal.aborted) return
       setData(next)
       setLastUpdated(next.lastUpdated)
+      recordRecentLeague(next)
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
         url.searchParams.set('league', activeId)
         window.history.replaceState({}, '', url.toString())
       }
     } catch (reason) {
+      if (controller.signal.aborted || isAbortError(reason)) return
       setError(reason instanceof Error ? reason.message : 'Could not load league data.')
     } finally {
+      if (abortRef.current === controller) {
+        setBusy(false)
+      }
+    }
+  }, [recordRecentLeague])
+
+  async function refresh(targetInput?: string) {
+    const queryInput = (targetInput ?? leagueId).trim()
+    if (!queryInput) {
+      setError('Please enter a Sleeper League ID or @username.')
       setBusy(false)
+      return
+    }
+    if (/^\d+$/.test(queryInput)) {
+      await loadLeagueById(queryInput, true)
+      return
+    }
+    const cleanedUsername = queryInput.replace(/^@+/, '').trim()
+    if (!cleanedUsername) {
+      setError('Please enter a Sleeper League ID or @username.')
+      setBusy(false)
+      return
+    }
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBusy(true)
+    setError('')
+    try {
+      const leagues = await fetchUserLeagues(cleanedUsername, controller.signal)
+      if (controller.signal.aborted) return
+      if (!leagues.length) {
+        setUserLeagues([])
+        setResolvedUserLabel('')
+        setError(`No Sleeper leagues found for "@${cleanedUsername}".`)
+        return
+      }
+      setUserLeagues(leagues)
+      setResolvedUserLabel(cleanedUsername)
+      await loadLeagueById(leagues[0].league_id, false)
+    } catch (reason) {
+      if (controller.signal.aborted || isAbortError(reason)) return
+      setUserLeagues([])
+      setResolvedUserLabel('')
+      setError(reason instanceof Error ? reason.message : 'Could not find Sleeper user or leagues.')
+    } finally {
+      if (abortRef.current === controller) {
+        setBusy(false)
+      }
     }
   }
 
   async function copyShareUrl() {
     if (typeof window === 'undefined') return
-    const activeId = leagueId.trim()
+    const trimmed = leagueId.trim()
+    const activeId = data?.league.league_id ?? (/^\d+$/.test(trimmed) ? trimmed : '')
     if (!activeId) return
     const url = new URL(window.location.href)
     url.searchParams.set('league', activeId)
@@ -76,26 +191,43 @@ function App() {
   }
 
   useEffect(() => {
-    const id = getInitialLeagueId()
-    if (id) {
-      void refresh(id)
-    } else {
-      setBusy(false)
+    if (!initialId) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    void loadLeagueData(initialId, controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted) return
+        setData(next)
+        setLastUpdated(next.lastUpdated)
+        recordRecentLeague(next)
+      })
+      .catch((reason) => {
+        if (controller.signal.aborted || isAbortError(reason)) return
+        setError(reason instanceof Error ? reason.message : 'Could not load league data.')
+      })
+      .finally(() => {
+        if (abortRef.current === controller) {
+          setBusy(false)
+        }
+      })
+    return () => {
+      controller.abort()
     }
-  }, [])
+  }, [initialId, recordRecentLeague])
 
   const picks = useMemo(() => (data ? projectDraftOrder(data) : []), [data])
   const query = search.trim().toLowerCase()
   const visiblePicks = picks.filter((team) => `${team.name} ${team.pickHolder} ${team.record}`.toLowerCase().includes(query))
     .sort((first, second) => first.pick - second.pick)
-  const rookieYear = Number(data?.league.season ?? 2026) + 1
+  const rookieYear = data ? upcomingRookieSeason(data.league) : DEFAULT_ROOKIE_YEAR
   const totalTeams = data?.rosters.length ?? 0
   const playoffTeamsCount = data ? Math.min(totalTeams, Math.max(0, Number(data.league.settings.playoff_teams ?? 6))) : 6
   const nonPlayoffCount = data ? Math.max(0, totalTeams - playoffTeamsCount) : 6
   const currentWeek = data?.currentWeek ?? 0
   const hasMedianMatch = Number(data?.league.settings.league_average_match) === 1
   const regularSeasonEnd = data ? Math.min(18, Math.max(1, (Number(data.league.settings.playoff_week_start) || 15) - 1)) : 14
-  const remainingWeeks = data ? Math.max(0, regularSeasonEnd - Math.max(1, data.currentWeek) + 1) : 0
+  const isRegularSeasonComplete = Boolean(data && data.lastScoredWeek >= regularSeasonEnd)
+  const remainingWeeks = data ? Math.max(0, regularSeasonEnd - data.lastScoredWeek) : 0
   const remainingGames = remainingWeeks * (hasMedianMatch ? 2 : 1)
 
   const scoring = data?.league.scoring_settings
@@ -150,16 +282,15 @@ function App() {
       <section className="intro" id="top">
         <div><p className="eyebrow">PICK POSITION INTELLIGENCE <span>·</span> WEEK {currentWeek || '--'}</p><h1>Draft order, <em>in motion.</em></h1><p className="intro-copy">A live read on where the rookie picks are headed, shaped by every point, bye and roster move.</p></div>
         <div className="league-control">
-          <label htmlFor="league-id">SLEEPER LEAGUE ID</label>
+          <label htmlFor="league-id">SLEEPER LEAGUE ID OR USERNAME</label>
           <div className="league-input-row">
             <input
               id="league-id"
               value={leagueId}
               onChange={(event) => setLeagueId(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') void refresh() }}
-              placeholder="League ID"
-              aria-label="Sleeper League ID"
-              inputMode="numeric"
+              placeholder="League ID or @username"
+              aria-label="Sleeper League ID or username"
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
@@ -185,16 +316,51 @@ function App() {
             </button>
           </div>
           <div className="refresh-meta">
-            <Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'ENTER A SLEEPER LEAGUE ID AND CLICK REFRESH'}
+            <Clock3 size={12} /> {lastUpdated ? `UPDATED ${new Date(lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · MANUAL REFRESH` : 'ENTER A SLEEPER LEAGUE ID OR @USERNAME'}
           </div>
+          {userLeagues.length > 1 && (
+            <div className="quick-leagues-row" aria-label={`Leagues for @${resolvedUserLabel}`}>
+              <span className="quick-leagues-label">@{resolvedUserLabel}</span>
+              {userLeagues.map((entry) => (
+                <button
+                  key={entry.league_id}
+                  type="button"
+                  className={`quick-league-chip ${data?.league.league_id === entry.league_id ? 'active' : ''}`}
+                  onClick={() => void loadLeagueById(entry.league_id, false)}
+                  disabled={busy}
+                  title={`${entry.name} (${entry.season} · ${entry.total_rosters} teams)`}
+                >
+                  <span>{entry.name}</span>
+                  {entry.isDynasty && <span className="dynasty-badge">DYN</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {userLeagues.length <= 1 && recentLeagues.length > 0 && (
+            <div className="quick-leagues-row" aria-label="Recent leagues">
+              <span className="quick-leagues-label">RECENT</span>
+              {recentLeagues.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={`quick-league-chip ${data?.league.league_id === entry.id ? 'active' : ''}`}
+                  onClick={() => void loadLeagueById(entry.id, true)}
+                  disabled={busy}
+                  title={`${entry.name} (${entry.season})`}
+                >
+                  <span>{entry.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
       {error && <div className="error-banner"><CircleAlert size={16} /><span>Live data unavailable: {error}</span><button type="button" onClick={() => void refresh()}>Retry</button></div>}
 
       <section className="summary-strip" aria-label="League summary">
-        <div className="summary-item"><span className="summary-label">LEAGUE</span><strong>{data?.league.name ?? (busy ? 'Connecting…' : 'No league connected')}</strong><span className="summary-note">{data ? `${totalTeams} franchises · ${data.league.scoring_settings.rec ?? 0} PPR${data.league.scoring_settings.bonus_rec_te ? ` (+${data.league.scoring_settings.bonus_rec_te} TEP)` : ''}` : 'Enter a league ID above'}</span></div>
-        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ {regularSeasonEnd}</span></strong><span className="summary-note">{data ? 'Current week + remaining projections' : 'Awaiting league ID'}</span></div>
+        <div className="summary-item"><span className="summary-label">LEAGUE</span><strong>{data?.league.name ?? (busy ? 'Connecting…' : 'No league connected')}</strong><span className="summary-note">{data ? `${totalTeams} franchises · ${data.league.scoring_settings.rec ?? 0} PPR${data.league.scoring_settings.bonus_rec_te ? ` (+${data.league.scoring_settings.bonus_rec_te} TEP)` : ''}` : 'Enter a league ID or @username above'}</span></div>
+        <div className="summary-item"><span className="summary-label">REGULAR SEASON</span><strong>WEEK {currentWeek || '--'} <span className="summary-muted">/ {regularSeasonEnd}</span></strong><span className="summary-note">{data ? (isRegularSeasonComplete ? 'Regular season complete · Order locked' : 'Current week + remaining projections') : 'Awaiting league ID'}</span></div>
         <div className="summary-item"><span className="summary-label">LOTTERY PICKS</span><strong>{data ? `01 — ${String(nonPlayoffCount).padStart(2, '0')}` : '—'}</strong><span className="summary-note">Reverse Max Points For</span></div>
       </section>
 
@@ -202,20 +368,20 @@ function App() {
         <div className="section-heading"><div><p className="eyebrow">THE BOARD <span>·</span> {data?.league.name.toUpperCase() ?? 'SLEEPER DYNASTY'}</p><h2>{view === 'assets' ? 'Traded pick assets' : 'Projected rookie order'}</h2></div><div className="board-tools"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a team" aria-label="Find a team" /></div><div className="view-tabs" role="tablist" aria-label="Board view"><button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>PICK ORDER</button><button type="button" role="tab" aria-selected={view === 'assets'} className={view === 'assets' ? 'selected' : ''} onClick={() => setView('assets')}>PICK ASSETS</button></div></div></div>
 
         {view === 'assets' ? <div className="table-wrap"><table><thead><tr><th>ORIGINAL PICK</th><th>CURRENT HOLDER</th><th>ROUND</th><th>SEASON</th><th>STATUS</th></tr></thead><tbody>
-          {data?.tradedPicks.filter((pick) => Number(pick.season) === Number(data.league.season) + 1).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
-          {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Enter a Sleeper league ID above to see pick assets.'}</td></tr>}
-        </tbody></table></div> : <div className="table-wrap"><table><thead><tr><th className="rank-col">{view === 'order' ? 'PICK' : 'SEED'}</th><th>FRANCHISE</th>{view === 'order' && <th>{rookieYear} PICK HOLDER</th>}<th>CURRENT RECORD</th><th>{view === 'order' ? 'PICK ODDS' : 'PLAYOFF CHANCE'}</th><th>xPICK</th><th>PROJECTED MAX PF</th><th>CURRENT MAX PF</th></tr></thead><tbody>
-          {visiblePicks.map((team) => { const inLottery = team.pick <= nonPlayoffCount; const top = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).filter((outcome) => outcome.chance > 0).sort((a, b) => b.chance - a.chance || a.pick - b.pick).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
+          {data?.tradedPicks.filter((pick) => Number(pick.season) === rookieYear).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
+          {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Enter a Sleeper league ID or @username above to see pick assets.'}</td></tr>}
+        </tbody></table></div> : <div className="table-wrap"><table><thead><tr><th className="rank-col">PICK</th><th>FRANCHISE</th><th>{rookieYear} PICK HOLDER</th><th>CURRENT RECORD</th><th>PICK ODDS</th><th>xPICK</th><th>PROJECTED MAX PF</th><th>CURRENT MAX PF</th></tr></thead><tbody>
+          {visiblePicks.map((team) => { const inLottery = team.pick <= nonPlayoffCount; const sortedOutcomes = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).filter((outcome) => outcome.chance > 0).sort((a, b) => b.chance - a.chance || a.pick - b.pick); const top = sortedOutcomes.filter((outcome, index) => outcome.chance >= 0.005 || index === 0).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(team.pick).padStart(2, '0')}</span></td>
             <td className="franchise-cell"><span className="franchise-name" title={team.name}>{team.name}</span></td>
             <td className="holder-cell" data-label={`${rookieYear} PICK HOLDER`} title={team.pickHolder}>{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>
             <td className="record-cell"><span className="record-pill">{team.record}</span></td>
-            <td className="odds-cell-td"><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{formatChance(range.low)}–{formatChance(range.high)}</small></span>)}</div></td>
+            <td className="odds-cell-td"><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{range.high - range.low < 0.0001 && chance >= 0.9999 ? 'LOCKED' : `${formatChance(range.low)}–${formatChance(range.high)}`}</small></span>)}</div></td>
             <td className="numeric-cell xpick-cell"><span className={`xpick-pill ${inLottery ? 'xpick-lottery' : ''}`}>{team.expectedPick.toFixed(1)}</span></td>
             <td className="numeric-cell proj-maxpf-cell">{formatNumber(team.maxPf)}</td>
             <td className="numeric-cell curr-maxpf-cell">{formatNumber(team.currentMaxPf)}</td>
           </tr> })}
-          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
+          {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID or @username above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
         <footer className="table-footer"><div className="legend"><span><i className="legend-dot lottery-dot" /> 01—{String(nonPlayoffCount).padStart(2, '0')} REVERSE MAX PF</span><span><i className="legend-dot playoff-dot" /> PLAYOFF SEED</span><span><ShieldCheck size={14} /> INJURY + BYE ADJUSTED</span></div><span className="simulation-note">{picks.length ? `${picks.length} TEAMS · ${picks[0]?.modelNames.length ?? 13} ENGINES · ${(picks[0]?.simulationCount ?? 6000).toLocaleString('en-US')} SEASONS + EXACT MATH` : 'SIMULATIONS WILL APPEAR WHEN DATA LOADS'}</span></footer>
