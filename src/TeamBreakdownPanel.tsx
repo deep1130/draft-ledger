@@ -42,7 +42,7 @@ export function TeamBreakdownPanel({ team, lastScoredWeek, regularSeasonEnd }: T
                       )}
                     </div>
                     <span className="detail-player-sub">
-                      {player.weeksStarted} started ({player.weeksRostered} on roster) · Starter {formatPts(player.starterPoints)}
+                      {player.weeksOptimal} optimal wk{player.weeksOptimal === 1 ? '' : 's'} ({player.weeksRostered} on roster) · Starter {formatPts(player.starterPoints)} ({player.weeksStarted} started)
                     </span>
                   </div>
                 </div>

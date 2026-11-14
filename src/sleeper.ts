@@ -91,6 +91,7 @@ export interface RosterPlayerContribution {
   maxPfPoints: number
   totalPoints: number
   weeksStarted: number
+  weeksOptimal: number
   weeksRostered: number
 }
 
@@ -510,6 +511,7 @@ export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Pr
             }
             if (optimalSet.has(playerId)) {
               prev.maxPfPoints += validPts
+              prev.weeksOptimal += 1
             }
           } else {
             rosterBucket[playerId] = {
@@ -518,6 +520,7 @@ export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Pr
               maxPfPoints: optimalSet.has(playerId) ? validPts : 0,
               totalPoints: validPts,
               weeksStarted: starterSet.has(playerId) ? 1 : 0,
+              weeksOptimal: optimalSet.has(playerId) ? 1 : 0,
               weeksRostered: 1,
             }
           }

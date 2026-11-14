@@ -20,6 +20,7 @@ export interface PlayerSeasonLeader {
   maxPfPoints: number
   totalPoints: number
   weeksStarted: number
+  weeksOptimal: number
   weeksRostered: number
   onCurrentRoster: boolean
 }
@@ -2299,6 +2300,7 @@ function buildSeasonContributors(data: LeagueData, roster: SleeperRoster): Playe
         maxPfPoints: entry.maxPfPoints,
         totalPoints: entry.totalPoints,
         weeksStarted: entry.weeksStarted,
+        weeksOptimal: entry.weeksOptimal,
         weeksRostered: entry.weeksRostered,
         onCurrentRoster: currentRosterSet.has(entry.playerId),
       }
