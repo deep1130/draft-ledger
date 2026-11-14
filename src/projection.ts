@@ -2287,7 +2287,7 @@ function buildSeasonContributors(data: LeagueData, roster: SleeperRoster): Playe
   if (!byPlayer) return []
   const currentRosterSet = new Set(roster.players ?? [])
   return Object.values(byPlayer)
-    .filter((entry) => entry.totalPoints > 0.05 || entry.weeksStarted > 0)
+    .filter((entry) => entry.maxPfPoints > 0.05 || entry.totalPoints > 0.05 || entry.weeksStarted > 0)
     .map((entry) => {
       const player = data.players[entry.playerId]
       return {
@@ -2304,8 +2304,8 @@ function buildSeasonContributors(data: LeagueData, roster: SleeperRoster): Playe
       }
     })
     .sort((a, b) =>
-      b.starterPoints - a.starterPoints ||
       b.maxPfPoints - a.maxPfPoints ||
+      b.starterPoints - a.starterPoints ||
       b.totalPoints - a.totalPoints ||
       a.name.localeCompare(b.name),
     )

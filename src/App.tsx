@@ -433,7 +433,7 @@ function App() {
                 <h4>1. Exact League Settings &amp; Live Tracking</h4>
               </div>
               <p>
-                Weekly projections from Sleeper are converted using {data && scoringSummary ? `this league's exact rules (${scoringSummary})` : "this league's exact rules"}.
+                Load any dynasty league by 18-digit League ID or Sleeper <code>@username</code> (with recent leagues saved locally for quick switching). Weekly projections from Sleeper are converted using {data && scoringSummary ? `this league's exact rules (${scoringSummary})` : "this league's exact rules"}.
                 {hasMilestoneBonuses
                   ? ' Big-play bonuses (like 100-yard rushing/receiving or 300-yard passing milestones) are calculated using upper-tail probabilities under continuous '
                   : ' Standard yardage and touchdown scoring apply without milestone bonuses. '}{' '}
@@ -552,7 +552,7 @@ function App() {
                 </div>
                 <div className="model-engine-item">
                   <strong>13. Pure Matchup Math:</strong>
-                  Calculates exact mathematical win probabilities for every matchup and median game without simulation randomness using <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer">Poisson-Binomial convolutions</a> and <a href="https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function" target="_blank" rel="noopener noreferrer">Gaussian CDF integrals</a>.
+                  Calculates exact mathematical win probabilities for every head-to-head matchup and league median game without simulation randomness using <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer">Poisson-Binomial convolutions</a>, <a href="https://en.wikipedia.org/wiki/Gauss%E2%80%93Hermite_quadrature" target="_blank" rel="noopener noreferrer">Gauss-Hermite quadrature</a> for persistent rest-of-season team variance, Bayesian H2H outcome coupling, and <a href="https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function" target="_blank" rel="noopener noreferrer">Gaussian CDF integrals</a>.
                 </div>
               </div>
               <p style={{ marginTop: '10px' }}>
@@ -569,7 +569,7 @@ function App() {
                 Real fantasy seasons are decided by injuries. In our simulations, players face realistic injury odds governed by position-calibrated <a href="https://en.wikipedia.org/wiki/Markov_chain" target="_blank" rel="noopener noreferrer">Markov chains</a>: <strong>Running Backs (~4.6%)</strong>, <strong>Tight Ends (~3.6%)</strong>, <strong>Wide Receivers (~3.3%)</strong>, and <strong>Quarterbacks (~2.2%)</strong> per game, with existing injuries taking realistic time to heal.
               </p>
               <p>
-                When a starter is sidelined, your highest-scoring bench player immediately steps up in both weekly matchups and Max PF calculations.
+                When a starter is sidelined—or on an NFL bye week—your highest-scoring available bench player steps up in weekly matchups and Max PF calculations. Players on a bye score zero while skipping that week's new-injury hazard (existing injuries still advance toward recovery), and bye weeks are excluded from historical sample counts.
               </p>
               <p>
                 This reveals the huge difference between deep rosters and top-heavy teams: fragile rosters suffer devastating scoring drops when stars miss time, losing matchups and tumbling down the standings, while deep benches insulate lineups and keep scoring high all season long.
@@ -594,7 +594,7 @@ function App() {
               </div>
             ) : null}
 
-            <div className={`model-card ${(!data || nonPlayoffCount === 0 || playoffTeamsCount === 0) ? 'full-width' : ''}`}>
+            <div className="model-card">
               <div className="model-card-header">
                 <span className="model-card-tag">DRAFT CAPITAL</span>
                 <h4>{data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? '8. Expected Pick (xPick) & Traded Picks' : '7. Expected Pick (xPick) & Traded Picks'}</h4>
@@ -604,6 +604,22 @@ function App() {
               </p>
               <p>
                 <strong>Traded Pick Tracking:</strong> All draft pick trades are pulled live from Sleeper. If Team A traded away their 1st-round pick to Team B, the draft slot is decided by where Team A finishes, but ownership of the pick is awarded to Team B on the board.
+              </p>
+            </div>
+
+            <div className={`model-card ${(!data || nonPlayoffCount === 0 || playoffTeamsCount === 0) ? 'full-width' : ''}`}>
+              <div className="model-card-header">
+                <span className="model-card-tag">ROSTER ATTRIBUTION</span>
+                <h4>{data && nonPlayoffCount > 0 && playoffTeamsCount > 0 ? '9. Expandable Player Breakdown & Trade Attribution' : '8. Expandable Player Breakdown & Trade Attribution'}</h4>
+              </div>
+              <p>
+                Click any franchise row in the board to inspect the individual players driving that team's draft position:
+              </p>
+              <p>
+                <strong>Most Points Contributed This Season:</strong> Ranked by historical optimal <strong>Max PF contribution</strong> (<code>MAX PF PTS</code>), with actual started points and weeks started/rostered shown underneath. Points are attributed strictly to the weeks each player spent on that team's roster—players since moved away are flagged <code>TRADED / GONE</code>.
+              </p>
+              <p>
+                <strong>Most Projected Points Remaining:</strong> Ranks each active roster player's projected optimal-lineup (<strong>Max PF</strong>) share across remaining regular-season weeks, updated live for trades, waiver pickups, NFL bye weeks, and Markov injury availability.
               </p>
             </div>
           </div>
@@ -694,7 +710,7 @@ Discrete recursion:
 P_m(k) = P_{m-1}(k) * (1 - p_m) + P_{m-1}(k - 1) * p_m`}
                   </div>
                   <p>
-                    Over N remaining regular season weeks with heterogeneous win probabilities, total wins W follow an exact discrete distribution. In leagues with weekly median matches, each week's joint outcome over {'{'}0, 1, 2{'}'} wins is integrated via Gauss-Hermite quadrature to capture sweep correlation between head-to-head and median results, and convolved across the remaining schedule.
+                    Over N remaining regular season weeks with heterogeneous win probabilities, total wins W follow an exact discrete distribution. Shared rest-of-season team-strength variance is integrated via Gauss-Hermite quadrature—preserving persistent talent/offense shocks, H2H-vs-median sweep correlation, and Bayesian H2H win-state coupling across opposing schedules—before exact Poisson-Binomial convolution (using exact league-score order-statistic probabilities when weekly median games apply).
                   </p>
                   <a href="https://en.wikipedia.org/wiki/Poisson_binomial_distribution" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
                     <span>Read Wikipedia: Poisson binomial distribution</span>
@@ -714,7 +730,7 @@ P = [ [ 1 - λ_pos,    λ_pos   ]
 λ_RB ≈ 4.6%,  λ_TE ≈ 3.6%,  λ_WR ≈ 3.3%,  λ_QB ≈ 2.2%`}
                   </div>
                   <p>
-                    Weekly player availability follows a discrete-time Markov chain with transition matrix P. New weekly hazard rates λ are position-calibrated from historical NFL snap data, while recovery parameter μ models multi-week recovery half-lives across simulated seasons to test roster depth and bench insulation.
+                    Weekly player availability follows a discrete-time Markov chain with transition matrix P. New weekly hazard rates λ are position-calibrated from historical NFL snap data (with λ = 0 on NFL bye weeks and for already-completed healthy live appearances), while recovery parameter μ models multi-week recovery half-lives across simulated seasons to test roster depth and bench insulation.
                   </p>
                   <a href="https://en.wikipedia.org/wiki/Markov_chain" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
                     <span>Read Wikipedia: Markov chain</span>
@@ -770,7 +786,7 @@ B_i = τ² / [ τ² + σ_i² / n_i ]
 P(Pick = j) ≈ (1 / K) ∑_{k=1}^K I(Pick^(k) = j),   K = 6,000`}
                   </div>
                   <p>
-                    Player baseline means apply Empirical Bayes shrinkage, pulling small in-season sample averages toward projected priors to prevent overfitting early anomalies. Twelve Monte Carlo engines then simulate 6,000 complete remaining seasons with persistent talent and offensive shocks.
+                    Player baseline means apply Empirical Bayes shrinkage, pulling small in-season sample averages (excluding NFL bye weeks from n_i) toward projected priors to prevent overfitting early anomalies. Twelve Monte Carlo engines then simulate 6,000 complete remaining seasons with persistent talent and offensive shocks.
                   </p>
                   <a href="https://en.wikipedia.org/wiki/Empirical_Bayes_method" target="_blank" rel="noopener noreferrer" className="math-wiki-link">
                     <span>Read Wikipedia: Empirical Bayes method</span>

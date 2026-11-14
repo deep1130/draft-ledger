@@ -20,7 +20,7 @@ export function TeamBreakdownPanel({ team, lastScoredWeek, regularSeasonEnd }: T
         <div className="detail-header">
           <div>
             <span className="detail-eyebrow">MOST POINTS CONTRIBUTED THIS SEASON · {seasonWindowLabel}</span>
-            <p className="detail-subtitle">Credited only for weeks spent on {team.name}</p>
+            <p className="detail-subtitle">Optimal Max PF share credited only for weeks on {team.name}</p>
           </div>
         </div>
         {team.topSeasonContributors.length === 0 ? (
@@ -42,13 +42,13 @@ export function TeamBreakdownPanel({ team, lastScoredWeek, regularSeasonEnd }: T
                       )}
                     </div>
                     <span className="detail-player-sub">
-                      {player.weeksStarted} started ({player.weeksRostered} on roster) · Max PF {formatPts(player.maxPfPoints)}
+                      {player.weeksStarted} started ({player.weeksRostered} on roster) · Starter {formatPts(player.starterPoints)}
                     </span>
                   </div>
                 </div>
                 <div className="detail-player-pts">
-                  <strong>{formatPts(player.starterPoints)}</strong>
-                  <span>STARTER PTS</span>
+                  <strong>{formatPts(player.maxPfPoints)}</strong>
+                  <span>MAX PF PTS</span>
                 </div>
               </li>
             ))}
