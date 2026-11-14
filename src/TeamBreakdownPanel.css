@@ -1,70 +1,54 @@
 .lottery-row,
-.playoff-row,
-.row-expand-strip {
+.playoff-row {
   cursor: pointer;
-}
-
-.lottery-row td,
-.playoff-row td {
-  height: 54px;
-  padding: 7px 10px 5px;
-  border-bottom: 0;
 }
 
 .expanded-row td {
   background: rgba(255, 255, 255, 0.025);
-  border-bottom: 0;
-}
-
-.row-expand-strip > td,
-.row-expand-strip:hover > td {
-  height: auto;
-  padding: 0 10px 8px;
-  border-bottom: 1px solid var(--line-subtle);
-  background: transparent;
-}
-
-.row-expand-strip.lottery-strip > td:first-child {
-  border-left: 3px solid var(--lottery);
-}
-
-.row-expand-strip.playoff-strip > td:first-child {
-  border-left: 3px solid var(--playoff);
-}
-
-.row-expand-strip.open > td,
-.row-expand-strip.open:hover > td {
-  background: rgba(255, 255, 255, 0.025);
   border-bottom-color: transparent;
 }
 
-.table-wrap tbody tr:last-child.row-expand-strip > td,
-.table-wrap tbody tr:last-child.team-detail-row > td {
-  border-bottom: 0;
+.franchise-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  max-width: 175px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.row-expand-btn {
+.franchise-toggle .franchise-name {
+  min-width: 0;
+  width: 100%;
+  line-height: 1.2;
+}
+
+.expand-chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 5px;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   background: var(--surface-raised);
   color: var(--ink-secondary);
-  font: 600 9px var(--mono);
-  letter-spacing: 0.05em;
-  cursor: pointer;
+  font: 600 8px/1.3 var(--mono);
+  letter-spacing: 0.04em;
   transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
-.row-expand-strip:hover .row-expand-btn,
-.row-expand-btn:hover,
-.row-expand-btn:focus-visible,
-.row-expand-strip.open .row-expand-btn {
+.lottery-row:hover .expand-chip,
+.playoff-row:hover .expand-chip,
+.franchise-toggle:hover .expand-chip,
+.franchise-toggle:focus-visible .expand-chip,
+.expand-chip.open {
   border-color: var(--lottery-border);
   background: var(--lottery-soft);
   color: var(--lottery-text);
@@ -247,32 +231,8 @@
   .expanded-row td {
     background: transparent;
   }
-  .table-wrap tbody tr.lottery-row,
-  .table-wrap tbody tr.playoff-row {
-    padding-bottom: 8px;
-    border-bottom: 0;
-  }
-  .table-wrap tbody tr.row-expand-strip {
-    display: block;
-    width: 100%;
-    border-left: 3px solid var(--lottery);
-    border-bottom: 1px solid var(--line-subtle);
-    background: var(--surface);
-  }
-  .table-wrap tbody tr.row-expand-strip.playoff-strip {
-    border-left-color: var(--playoff);
-  }
-  .table-wrap tbody tr.row-expand-strip.open {
-    background: rgba(255, 255, 255, 0.025);
-    border-bottom-color: transparent;
-  }
-  .table-wrap tr.row-expand-strip > td,
-  .table-wrap tr.row-expand-strip > td:first-child {
-    display: block;
-    width: 100%;
-    height: auto;
-    padding: 0 11px 10px;
-    border: 0;
+  .franchise-toggle {
+    max-width: none;
   }
   .table-wrap tr.team-detail-row > td {
     display: block;

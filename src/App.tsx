@@ -239,14 +239,6 @@ function App() {
   const query = search.trim().toLowerCase()
   const visiblePicks = picks.filter((team) => `${team.name} ${team.pickHolder} ${team.record}`.toLowerCase().includes(query))
     .sort((first, second) => first.pick - second.pick)
-  const allVisibleExpanded = visiblePicks.length > 0 && visiblePicks.every((team) => expandedRosterIds.has(team.roster.roster_id))
-  const toggleExpandAll = useCallback(() => {
-    setExpandedRosterIds((prev) => {
-      const allOpen = visiblePicks.length > 0 && visiblePicks.every((team) => prev.has(team.roster.roster_id))
-      if (allOpen) return new Set()
-      return new Set(visiblePicks.map((team) => team.roster.roster_id))
-    })
-  }, [visiblePicks])
   const rookieYear = data ? upcomingRookieSeason(data.league) : DEFAULT_ROOKIE_YEAR
   const totalTeams = data?.rosters.length ?? 0
   const playoffTeamsCount = data ? Math.min(totalTeams, Math.max(0, Number(data.league.settings.playoff_teams ?? 6))) : 6
@@ -393,7 +385,7 @@ function App() {
       </section>
 
       <section className="projection-section">
-        <div className="section-heading"><div><p className="eyebrow">THE BOARD <span>·</span> {data?.league.name.toUpperCase() ?? 'SLEEPER DYNASTY'}</p><h2>{view === 'assets' ? 'Traded pick assets' : 'Projected rookie order'}</h2>{view === 'order' && picks.length > 0 && <p className="board-hint">Click any row or its <code>EXPAND PLAYERS</code> bar below to see Max PF contributors &amp; projected leaders.</p>}</div><div className="board-tools"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a team" aria-label="Find a team" /></div>{view === 'order' && visiblePicks.length > 0 && <button type="button" className={`expand-all-btn ${allVisibleExpanded ? 'active' : ''}`} onClick={toggleExpandAll} title={allVisibleExpanded ? 'Collapse all player breakdowns' : 'Expand all player breakdowns'}><ChevronDown size={13} className={`expand-chevron ${allVisibleExpanded ? 'open' : ''}`} /><span>{allVisibleExpanded ? 'COLLAPSE ALL' : 'EXPAND ALL'}</span></button>}<div className="view-tabs" role="tablist" aria-label="Board view"><button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>PICK ORDER</button><button type="button" role="tab" aria-selected={view === 'assets'} className={view === 'assets' ? 'selected' : ''} onClick={() => setView('assets')}>PICK ASSETS</button></div></div></div>
+        <div className="section-heading"><div><p className="eyebrow">THE BOARD <span>·</span> {data?.league.name.toUpperCase() ?? 'SLEEPER DYNASTY'}</p><h2>{view === 'assets' ? 'Traded pick assets' : 'Projected rookie order'}</h2>{view === 'order' && picks.length > 0 && <p className="board-hint">Click any row or its <code>EXPAND</code> button to see Max PF contributors &amp; projected leaders.</p>}</div><div className="board-tools"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a team" aria-label="Find a team" /></div><div className="view-tabs" role="tablist" aria-label="Board view"><button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>PICK ORDER</button><button type="button" role="tab" aria-selected={view === 'assets'} className={view === 'assets' ? 'selected' : ''} onClick={() => setView('assets')}>PICK ASSETS</button></div></div></div>
 
         {view === 'assets' ? <div className="table-wrap"><table><thead><tr><th>ORIGINAL PICK</th><th>CURRENT HOLDER</th><th>ROUND</th><th>SEASON</th><th>STATUS</th></tr></thead><tbody>
           {data?.tradedPicks.filter((pick) => Number(pick.season) === rookieYear).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
@@ -405,7 +397,22 @@ function App() {
           >
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(team.pick).padStart(2, '0')}</span></td>
             <td className="franchise-cell">
-              <span className="franchise-name" title={team.name}>{team.name}</span>
+              <button
+                type="button"
+                className="franchise-toggle"
+                aria-expanded={isExpanded}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  toggleRosterExpand(team.roster.roster_id)
+                }}
+                title="Expand player points contributed and projected remaining"
+              >
+                <span className="franchise-name" title={team.name}>{team.name}</span>
+                <span className={`expand-chip ${isExpanded ? 'open' : ''}`}>
+                  <ChevronDown size={10} className={`expand-chevron ${isExpanded ? 'open' : ''}`} />
+                  <span>{isExpanded ? 'COLLAPSE' : 'EXPAND'}</span>
+                </span>
+              </button>
             </td>
             <td className="holder-cell" data-label={`${rookieYear} PICK HOLDER`} title={team.pickHolder}>{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>
             <td className="record-cell"><span className="record-pill">{team.record}</span></td>
@@ -413,24 +420,6 @@ function App() {
             <td className="numeric-cell xpick-cell"><span className={`xpick-pill ${inLottery ? 'xpick-lottery' : ''}`}>{team.expectedPick.toFixed(1)}</span></td>
             <td className="numeric-cell proj-maxpf-cell">{formatNumber(team.maxPf)}</td>
             <td className="numeric-cell curr-maxpf-cell">{formatNumber(team.currentMaxPf)}</td>
-          </tr><tr
-            className={`row-expand-strip ${inLottery ? 'lottery-strip' : 'playoff-strip'} ${isExpanded ? 'open' : ''} ${busy ? 'dim-row' : ''}`}
-            onClick={() => toggleRosterExpand(team.roster.roster_id)}
-          >
-            <td colSpan={8}>
-              <button
-                type="button"
-                className="row-expand-btn"
-                aria-expanded={isExpanded}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  toggleRosterExpand(team.roster.roster_id)
-                }}
-              >
-                <ChevronDown size={12} className={`expand-chevron ${isExpanded ? 'open' : ''}`} />
-                <span>{isExpanded ? 'COLLAPSE PLAYERS' : 'EXPAND PLAYERS'}</span>
-              </button>
-            </td>
           </tr>{isExpanded && <tr className="team-detail-row"><td colSpan={8}><TeamBreakdownPanel team={team} lastScoredWeek={data?.lastScoredWeek ?? 0} regularSeasonEnd={regularSeasonEnd} /></td></tr>}</Fragment> })}
           {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID or @username above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
