@@ -1,5 +1,6 @@
 import {
   normalizeNflTeam,
+  playerDisplayName,
   playerFitsSlot,
   selectOptimalLineup,
   starterSlotsForLeague,
@@ -9,6 +10,31 @@ import {
   type SleeperRoster,
   type StatLine,
 } from './sleeper'
+
+export interface PlayerSeasonLeader {
+  playerId: string
+  name: string
+  position: string
+  nflTeam: string
+  starterPoints: number
+  maxPfPoints: number
+  totalPoints: number
+  weeksStarted: number
+  weeksRostered: number
+  onCurrentRoster: boolean
+}
+
+export interface PlayerRemainingLeader {
+  playerId: string
+  name: string
+  position: string
+  nflTeam: string
+  projectedStarterPoints: number
+  projectedTotalPoints: number
+  projectedWeeksStarted: number
+  injuryStatus: string | null
+  isStartingNextWeek: boolean
+}
 
 export interface ProjectedPick {
   roster: SleeperRoster
@@ -22,6 +48,8 @@ export interface ProjectedPick {
   pickHolderId: number
   probabilities: number[]
   probabilityRanges: Array<{ low: number; high: number }>
+  topSeasonContributors: PlayerSeasonLeader[]
+  topRemainingProjectors: PlayerRemainingLeader[]
   modelNames: string[]
   simulationCount: number
 }
@@ -1528,12 +1556,22 @@ function computeAnalyticalProbabilities(
   count: number,
   nonPlayoffCount: number,
   hasLeagueMedianMatch: boolean,
-): Map<number, number[]> {
+): { probabilities: Map<number, number[]>; remainingLeaders: Map<number, PlayerRemainingLeader[]> } {
   const result = new Map<number, number[]>()
+  const remainingAccByRoster = new Map<
+    number,
+    Map<string, { starter: number; total: number; weeksStarted: number; startingFirstWeek: boolean }>
+  >()
+  const rosterCurrentPlayers = new Map<number, Set<string>>()
   for (const r of data.rosters) {
     result.set(r.roster_id, new Array(count).fill(0))
+    remainingAccByRoster.set(r.roster_id, new Map())
+    rosterCurrentPlayers.set(r.roster_id, new Set(r.players ?? []))
   }
-  if (count <= 1) return result
+  const emptyLeaders = new Map<number, PlayerRemainingLeader[]>(
+    data.rosters.map((r) => [r.roster_id, []]),
+  )
+  if (count <= 1) return { probabilities: result, remainingLeaders: emptyLeaders }
 
   const rosterIds = data.rosters.map((r) => r.roster_id)
   const baseWins = new Map<number, number>()
@@ -1665,6 +1703,33 @@ function computeAnalyticalProbabilities(
       }
 
       const eff = rw.hasActualStarters ? 1 : (lineupEfficiencyByRoster.get(r.roster_id) ?? 1)
+      const remAcc = remainingAccByRoster.get(r.roster_id)
+      const currentSet = rosterCurrentPlayers.get(r.roster_id)
+      if (remAcc && currentSet) {
+        for (let i = 0; i < n; i += 1) {
+          const pw = players[i]
+          if (!currentSet.has(pw.id)) continue
+          const expPts = pMu[i]
+          if (expPts <= 0.05 && !isStarter[i]) continue
+          const prev = remAcc.get(pw.id)
+          if (prev) {
+            prev.total += expPts
+            if (isStarter[i]) {
+              prev.starter += expPts
+              prev.weeksStarted += 1
+              if (week === firstSimWeek) prev.startingFirstWeek = true
+            }
+          } else {
+            remAcc.set(pw.id, {
+              starter: isStarter[i] ? expPts : 0,
+              total: expPts,
+              weeksStarted: isStarter[i] ? 1 : 0,
+              startingFirstWeek: week === firstSimWeek && Boolean(isStarter[i]),
+            })
+          }
+        }
+      }
+
       let rawSMu = 0
       let rawSVar = 0
       let rosPlayerVar = 0
@@ -2135,7 +2200,39 @@ function computeAnalyticalProbabilities(
     result.set(rId, doublyStochastic[idx])
   })
 
-  return result
+  const remainingLeaders = new Map<number, PlayerRemainingLeader[]>()
+  for (const rId of rosterIds) {
+    const acc = remainingAccByRoster.get(rId)
+    if (!acc) {
+      remainingLeaders.set(rId, [])
+      continue
+    }
+    const ranked = [...acc.entries()]
+      .filter(([, v]) => v.total > 0.1 || v.starter > 0.1)
+      .map(([playerId, v]) => {
+        const player = data.players[playerId]
+        return {
+          playerId,
+          name: playerDisplayName(player, playerId),
+          position: player?.position ?? player?.fantasy_positions?.[0] ?? 'FLEX',
+          nflTeam: normalizeNflTeam(player?.team) ?? '',
+          projectedStarterPoints: v.starter,
+          projectedTotalPoints: v.total,
+          projectedWeeksStarted: v.weeksStarted,
+          injuryStatus: player?.injury_status ?? null,
+          isStartingNextWeek: v.startingFirstWeek,
+        }
+      })
+      .sort((a, b) =>
+        b.projectedStarterPoints - a.projectedStarterPoints ||
+        b.projectedTotalPoints - a.projectedTotalPoints ||
+        a.name.localeCompare(b.name),
+      )
+      .slice(0, 8)
+    remainingLeaders.set(rId, ranked)
+  }
+
+  return { probabilities: result, remainingLeaders }
 }
 
 function assignBijectiveDraftPicks<T extends { probabilities: number[]; maxPf: number }>(
@@ -2164,6 +2261,36 @@ function assignBijectiveDraftPicks<T extends { probabilities: number[]; maxPf: n
     pick: index + 1,
     expectedPick: entry.expectedPick,
   }))
+}
+
+function buildSeasonContributors(data: LeagueData, roster: SleeperRoster): PlayerSeasonLeader[] {
+  const byPlayer = data.historicalRosterContributions?.[roster.roster_id]
+  if (!byPlayer) return []
+  const currentRosterSet = new Set(roster.players ?? [])
+  return Object.values(byPlayer)
+    .filter((entry) => entry.totalPoints > 0.05 || entry.weeksStarted > 0)
+    .map((entry) => {
+      const player = data.players[entry.playerId]
+      return {
+        playerId: entry.playerId,
+        name: playerDisplayName(player, entry.playerId),
+        position: player?.position ?? player?.fantasy_positions?.[0] ?? 'FLEX',
+        nflTeam: normalizeNflTeam(player?.team) ?? '',
+        starterPoints: entry.starterPoints,
+        maxPfPoints: entry.maxPfPoints,
+        totalPoints: entry.totalPoints,
+        weeksStarted: entry.weeksStarted,
+        weeksRostered: entry.weeksRostered,
+        onCurrentRoster: currentRosterSet.has(entry.playerId),
+      }
+    })
+    .sort((a, b) =>
+      b.starterPoints - a.starterPoints ||
+      b.maxPfPoints - a.maxPfPoints ||
+      b.totalPoints - a.totalPoints ||
+      a.name.localeCompare(b.name),
+    )
+    .slice(0, 8)
 }
 
 export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
@@ -2257,6 +2384,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
           pickHolderId,
           probabilities,
           probabilityRanges,
+          topSeasonContributors: buildSeasonContributors(data, roster),
+          topRemainingProjectors: [],
           modelNames: allEngineLabels,
           simulationCount: TOTAL_SIMULATIONS,
         }
@@ -2875,7 +3004,10 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     }
   }
 
-  const analyticalProbabilities = computeAnalyticalProbabilities(
+  const {
+    probabilities: analyticalProbabilities,
+    remainingLeaders: remainingLeadersByRoster,
+  } = computeAnalyticalProbabilities(
     data,
     compiledWeeks,
     weekPairs,
@@ -2932,6 +3064,8 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
       pickHolderId,
       probabilities,
       probabilityRanges,
+      topSeasonContributors: buildSeasonContributors(data, team.roster),
+      topRemainingProjectors: remainingLeadersByRoster.get(team.roster.roster_id) ?? [],
       modelNames: allEngineLabels,
       simulationCount: TOTAL_SIMULATIONS,
     }

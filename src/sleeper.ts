@@ -85,6 +85,15 @@ export interface UserLeagueSummary {
   isDynasty: boolean
 }
 
+export interface RosterPlayerContribution {
+  playerId: string
+  starterPoints: number
+  maxPfPoints: number
+  totalPoints: number
+  weeksStarted: number
+  weeksRostered: number
+}
+
 export interface LeagueData {
   league: SleeperLeague
   rosters: SleeperRoster[]
@@ -98,6 +107,7 @@ export interface LeagueData {
   historicalTeamScores: Record<number, number[]>
   historicalPlayerPoints: Record<string, number[]>
   historicalPlayerWeeks: Record<string, number[]>
+  historicalRosterContributions?: Record<number, Record<string, RosterPlayerContribution>>
   lastUpdated: number
 }
 
@@ -236,11 +246,19 @@ export function selectOptimalLineup(
   return { total, starterIds }
 }
 
+export function playerDisplayName(player: SleeperPlayer | undefined, id: string): string {
+  if (player?.full_name) return player.full_name
+  const joined = [player?.first_name, player?.last_name].filter(Boolean).join(' ').trim()
+  if (joined) return joined
+  if (player?.position === 'DEF' && player.team) return `${player.team} DEF`
+  return id
+}
+
 function historicalMaxLineup(
   matchup: Matchup,
   players: Record<string, SleeperPlayer>,
   rosterPositions: string[],
-): number {
+): ReturnType<typeof selectOptimalLineup> {
   const slots = starterSlotsForLeague(rosterPositions)
   const points = matchup.players_points ?? {}
   const candidates = (matchup.players ?? Object.keys(points)).map((id) => ({
@@ -248,7 +266,7 @@ function historicalMaxLineup(
     player: players[id],
     points: typeof points[id] === 'number' && Number.isFinite(points[id]) ? points[id] : 0,
   }))
-  return selectOptimalLineup(candidates, slots).total
+  return selectOptimalLineup(candidates, slots)
 }
 
 function parseClockSeconds(displayClock?: string): number {
@@ -277,7 +295,12 @@ function compactPlayerIndex(raw: Record<string, SleeperPlayer>): Record<string, 
   for (const [id, p] of Object.entries(raw)) {
     if (!p) continue
     const entry: SleeperPlayer = { player_id: id }
-    if (p.full_name) entry.full_name = p.full_name
+    if (p.full_name) {
+      entry.full_name = p.full_name
+    } else {
+      if (p.first_name) entry.first_name = p.first_name
+      if (p.last_name) entry.last_name = p.last_name
+    }
     if (p.team) entry.team = p.team
     if (p.position) entry.position = p.position
     if (p.fantasy_positions?.length) entry.fantasy_positions = p.fantasy_positions
@@ -427,27 +450,64 @@ export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Pr
     getPlayerIndex(signal),
   ])
 
-  const historicalMaxPf = Object.fromEntries(rosters.map((roster) => [
-    roster.roster_id,
-    historicEntries.flatMap(([, matchups]) => {
-      const matchup = matchups.find((item) => item.roster_id === roster.roster_id)
-      return matchup ? [historicalMaxLineup(matchup, players, league.roster_positions)] : []
-    }),
-  ]))
-  const historicalTeamScores = Object.fromEntries(rosters.map((roster) => [
-    roster.roster_id,
-    historicEntries.flatMap(([, matchups]) => {
-      const matchup = matchups.find((item) => item.roster_id === roster.roster_id)
-      const score = matchup?.custom_points ?? matchup?.points
-      return typeof score === 'number' && Number.isFinite(score) ? [score] : []
-    }),
-  ]))
+  const historicalMaxPf: Record<number, number[]> = Object.fromEntries(rosters.map((roster) => [roster.roster_id, []]))
+  const historicalTeamScores: Record<number, number[]> = Object.fromEntries(rosters.map((roster) => [roster.roster_id, []]))
+  const historicalRosterContributions: Record<number, Record<string, RosterPlayerContribution>> = Object.fromEntries(
+    rosters.map((roster) => [roster.roster_id, {}]),
+  )
 
   const historicalPlayerPoints: Record<string, number[]> = {}
   const historicalPlayerWeeks: Record<string, number[]> = {}
   for (const [week, matchups] of historicEntries) {
     for (const matchup of matchups) {
-      for (const [playerId, pts] of Object.entries(matchup.players_points ?? {})) {
+      const rosterId = matchup.roster_id
+      const score = matchup.custom_points ?? matchup.points
+      if (typeof score === 'number' && Number.isFinite(score) && historicalTeamScores[rosterId]) {
+        historicalTeamScores[rosterId].push(score)
+      }
+
+      const optimal = historicalMaxLineup(matchup, players, league.roster_positions)
+      if (historicalMaxPf[rosterId]) {
+        historicalMaxPf[rosterId].push(optimal.total)
+      }
+      const optimalSet = new Set(optimal.starterIds)
+      const starterSet = new Set((matchup.starters ?? []).filter((id) => id && id !== '0'))
+      const pointsMap = matchup.players_points ?? {}
+      const rosterWeekIds = new Set<string>([
+        ...(matchup.players ?? []),
+        ...Object.keys(pointsMap),
+      ])
+      const rosterBucket = historicalRosterContributions[rosterId]
+
+      for (const playerId of rosterWeekIds) {
+        if (!playerId || playerId === '0') continue
+        const pts = pointsMap[playerId]
+        const validPts = typeof pts === 'number' && Number.isFinite(pts) ? pts : 0
+
+        if (rosterBucket) {
+          const prev = rosterBucket[playerId]
+          if (prev) {
+            prev.totalPoints += validPts
+            prev.weeksRostered += 1
+            if (starterSet.has(playerId)) {
+              prev.starterPoints += validPts
+              prev.weeksStarted += 1
+            }
+            if (optimalSet.has(playerId)) {
+              prev.maxPfPoints += validPts
+            }
+          } else {
+            rosterBucket[playerId] = {
+              playerId,
+              starterPoints: starterSet.has(playerId) ? validPts : 0,
+              maxPfPoints: optimalSet.has(playerId) ? validPts : 0,
+              totalPoints: validPts,
+              weeksStarted: starterSet.has(playerId) ? 1 : 0,
+              weeksRostered: 1,
+            }
+          }
+        }
+
         if (typeof pts === 'number' && Number.isFinite(pts)) {
           const bucket = historicalPlayerPoints[playerId]
           if (bucket) {
@@ -475,6 +535,7 @@ export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Pr
     historicalTeamScores,
     historicalPlayerPoints,
     historicalPlayerWeeks,
+    historicalRosterContributions,
     lastUpdated: Date.now(),
   }
 }

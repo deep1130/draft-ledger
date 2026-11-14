@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownUp, ArrowUpRight, Calculator, Check, ChevronDown, CircleAlert, Clock3, RefreshCw, Search, Share2, ShieldCheck, Trophy } from 'lucide-react'
 import { projectDraftOrder } from './projection'
 import { fetchUserLeagues, loadLeagueData, upcomingRookieSeason, type LeagueData, type UserLeagueSummary } from './sleeper'
+import { TeamBreakdownPanel } from './TeamBreakdownPanel'
 import './App.css'
 
 type View = 'order' | 'assets'
@@ -78,7 +79,17 @@ function App() {
   const [recentLeagues, setRecentLeagues] = useState<RecentLeague[]>(() => readRecentLeagues())
   const [userLeagues, setUserLeagues] = useState<UserLeagueSummary[]>([])
   const [resolvedUserLabel, setResolvedUserLabel] = useState('')
+  const [expandedRosterIds, setExpandedRosterIds] = useState<Set<number>>(() => new Set())
   const abortRef = useRef<AbortController | null>(null)
+
+  const toggleRosterExpand = useCallback((rosterId: number) => {
+    setExpandedRosterIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(rosterId)) next.delete(rosterId)
+      else next.add(rosterId)
+      return next
+    })
+  }, [])
 
   const recordRecentLeague = useCallback((next: LeagueData) => {
     const entry: RecentLeague = {
@@ -111,6 +122,7 @@ function App() {
       if (controller.signal.aborted) return
       setData(next)
       setLastUpdated(next.lastUpdated)
+      setExpandedRosterIds(new Set())
       recordRecentLeague(next)
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
@@ -371,16 +383,33 @@ function App() {
           {data?.tradedPicks.filter((pick) => Number(pick.season) === rookieYear).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
           {data && <tr className="owned-picks-row"><td colSpan={5}>Unlisted picks remain with their original franchise. Sleeper is the source of truth for traded-pick ownership.</td></tr>}{!data && <tr><td colSpan={5} className="empty-cell">{busy ? 'Loading traded picks…' : 'Enter a Sleeper league ID or @username above to see pick assets.'}</td></tr>}
         </tbody></table></div> : <div className="table-wrap"><table><thead><tr><th className="rank-col">PICK</th><th>FRANCHISE</th><th>{rookieYear} PICK HOLDER</th><th>CURRENT RECORD</th><th>PICK ODDS</th><th>xPICK</th><th>PROJECTED MAX PF</th><th>CURRENT MAX PF</th></tr></thead><tbody>
-          {visiblePicks.map((team) => { const inLottery = team.pick <= nonPlayoffCount; const sortedOutcomes = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).filter((outcome) => outcome.chance > 0).sort((a, b) => b.chance - a.chance || a.pick - b.pick); const top = sortedOutcomes.filter((outcome, index) => outcome.chance >= 0.005 || index === 0).slice(0, 8); return <tr key={team.roster.roster_id} className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${busy ? 'dim-row' : ''}`}>
+          {visiblePicks.map((team) => { const inLottery = team.pick <= nonPlayoffCount; const isExpanded = expandedRosterIds.has(team.roster.roster_id); const sortedOutcomes = team.probabilities.map((chance, pick) => ({ pick: pick + 1, chance, range: team.probabilityRanges[pick] })).filter((outcome) => outcome.chance > 0).sort((a, b) => b.chance - a.chance || a.pick - b.pick); const top = sortedOutcomes.filter((outcome, index) => outcome.chance >= 0.005 || index === 0).slice(0, 8); return <Fragment key={team.roster.roster_id}><tr
+            className={`${inLottery ? 'lottery-row' : 'playoff-row'} ${isExpanded ? 'expanded-row' : ''} ${busy ? 'dim-row' : ''}`}
+            onClick={() => toggleRosterExpand(team.roster.roster_id)}
+          >
             <td className="rank-cell"><span className={inLottery ? 'pick-number lottery-number' : 'pick-number'}>{String(team.pick).padStart(2, '0')}</span></td>
-            <td className="franchise-cell"><span className="franchise-name" title={team.name}>{team.name}</span></td>
+            <td className="franchise-cell">
+              <button
+                type="button"
+                className="franchise-toggle"
+                aria-expanded={isExpanded}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  toggleRosterExpand(team.roster.roster_id)
+                }}
+                title="Expand player points contributed and projected remaining"
+              >
+                <ChevronDown size={14} className={`expand-chevron ${isExpanded ? 'open' : ''}`} />
+                <span className="franchise-name" title={team.name}>{team.name}</span>
+              </button>
+            </td>
             <td className="holder-cell" data-label={`${rookieYear} PICK HOLDER`} title={team.pickHolder}>{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>
             <td className="record-cell"><span className="record-pill">{team.record}</span></td>
             <td className="odds-cell-td"><div className="odds-cell">{top.map(({ pick: pickNumber, chance, range }) => <span className={`odds-pill ${pickNumber <= nonPlayoffCount ? 'odds-lottery' : ''}`} key={pickNumber}><b>{String(pickNumber).padStart(2, '0')}</b><span>{formatChance(chance)}</span><small>{range.high - range.low < 0.0001 && chance >= 0.9999 ? 'LOCKED' : `${formatChance(range.low)}–${formatChance(range.high)}`}</small></span>)}</div></td>
             <td className="numeric-cell xpick-cell"><span className={`xpick-pill ${inLottery ? 'xpick-lottery' : ''}`}>{team.expectedPick.toFixed(1)}</span></td>
             <td className="numeric-cell proj-maxpf-cell">{formatNumber(team.maxPf)}</td>
             <td className="numeric-cell curr-maxpf-cell">{formatNumber(team.currentMaxPf)}</td>
-          </tr> })}
+          </tr>{isExpanded && <tr className="team-detail-row"><td colSpan={8}><TeamBreakdownPanel team={team} lastScoredWeek={data?.lastScoredWeek ?? 0} regularSeasonEnd={regularSeasonEnd} /></td></tr>}</Fragment> })}
           {!data && <tr><td colSpan={8} className="empty-cell">{busy ? <><RefreshCw size={16} className="spin" /> Loading live league data…</> : <div className="empty-league-prompt"><p>Enter your Sleeper League ID or @username above to generate live draft pick projections.</p></div>}</td></tr>}{data && visiblePicks.length === 0 && <tr><td colSpan={8} className="empty-cell">No teams match “{search}”.</td></tr>}
         </tbody></table></div>}
 
