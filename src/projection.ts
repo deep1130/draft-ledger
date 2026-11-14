@@ -769,7 +769,11 @@ function buildGlobalPlayerProfiles(
 
   const isLiveCurrentWeek = data.currentWeek > data.lastScoredWeek
   const liveFeed = isLiveCurrentWeek ? data.weeks[data.currentWeek] : undefined
-  const liveByeSet = new Set(liveFeed?.byes ?? [])
+  const liveByeSet = new Set(
+    (liveFeed?.byes ?? [])
+      .map((abbr) => normalizeNflTeam(abbr))
+      .filter((abbr): abbr is string => Boolean(abbr)),
+  )
   const livePointsByPlayer = new Map<string, number>()
   if (liveFeed) {
     for (const m of liveFeed.matchups) {
@@ -800,8 +804,11 @@ function buildGlobalPlayerProfiles(
   }
 
   const futureProjWeeks: number[] = []
-  for (let w = Math.max(firstSimWeek, data.currentWeek + 1); w <= regularEnd; w += 1) {
-    if (data.weeks[w]) futureProjWeeks.push(w)
+  const simProjWeeks: number[] = []
+  for (let w = firstSimWeek; w <= regularEnd; w += 1) {
+    if (!data.weeks[w]) continue
+    simProjWeeks.push(w)
+    if (w > data.currentWeek) futureProjWeeks.push(w)
   }
 
   for (const id of allRosterPlayerIds) {
@@ -845,23 +852,27 @@ function buildGlobalPlayerProfiles(
     const survivedLivePostHealthy =
       isLiveCurrentWeek && !liveOnBye && liveRawState === 'post' && injuryTier === 'healthy'
 
-    // Calculate future average non-bye Sleeper projection.
-    let futureProjSum = 0
-    let futureProjCount = 0
-    for (const w of futureProjWeeks) {
-      const feed = data.weeks[w]
-      if (!feed) continue
-      if (nflTeam && feed.byes.includes(nflTeam)) continue
-      const pStats = feed.projections[id]
-      const mu =
-        baseProjectionScore(pStats, scoring) +
-        (hasMilestoneBonuses ? expectedMilestoneBonus(pStats, scoring) : 0)
-      if (mu > 0.5) {
-        futureProjSum += mu
-        futureProjCount += 1
+    // Calculate future average non-bye Sleeper projection; fall back to current sim week if later weeks are all byes.
+    const teamByeMask = nflTeam ? (byeMaskByNflTeam.get(nflTeam) ?? 0) : 0
+    const avgNonByeProj = (targetWeeks: readonly number[]): number => {
+      let sum = 0
+      let cnt = 0
+      for (const w of targetWeeks) {
+        if (((teamByeMask >>> w) & 1) !== 0) continue
+        const feed = data.weeks[w]
+        if (!feed) continue
+        const pStats = feed.projections[id]
+        const mu =
+          baseProjectionScore(pStats, scoring) +
+          (hasMilestoneBonuses ? expectedMilestoneBonus(pStats, scoring) : 0)
+        if (mu > 0.5) {
+          sum += mu
+          cnt += 1
+        }
       }
+      return cnt > 0 ? sum / cnt : 0
     }
-    const meanFutureProj = futureProjCount > 0 ? futureProjSum / futureProjCount : 0
+    const meanFutureProj = avgNonByeProj(futureProjWeeks) || avgNonByeProj(simProjWeeks)
 
     // Guard against boosting healthy players who recently lost their role (3 straight recorded <=0.5 weeks guarantees >=2 non-bye DNPs).
     const recentHealthyBenched =
@@ -1647,9 +1658,17 @@ function computeAnalyticalProbabilities(
         const p0 = prof ? liveInGamePlayProbability(prof.injuryTier) : 1
         const lambda = prof?.injuryHazardBase ?? 0.032
         const muRec = prof?.injuryTier === 'ir' ? 0.18 : 0.44
-        const pInf = muRec / (lambda + muRec)
-        const rhoMarkov = Math.max(0, 1 - lambda - muRec)
-        const pAvail = weeksAhead === 0 ? p0 : pInf + (p0 - pInf) * Math.pow(rhoMarkov, weeksAhead)
+        const byeMask = prof?.byeWeekMask ?? 0
+        let pAvail = p0
+        if (weeksAhead > 0) {
+          for (let wStep = data.currentWeek; wStep < week; wStep += 1) {
+            const noHazardStep =
+              ((byeMask >>> wStep) & 1) !== 0 ||
+              (wStep === data.currentWeek && Boolean(prof?.survivedLivePostHealthy))
+            const stepLambda = noHazardStep ? 0 : lambda
+            pAvail = pAvail * (1 - stepLambda) + (1 - pAvail) * muRec
+          }
+        }
 
         const activeMu = (pw.remBaseMu + pw.expectedBonus) * pw.stdScale
         const activeVar = (pw.remBaseMu * pw.stdScale) * pw.theta2
@@ -2422,7 +2441,11 @@ export function projectDraftOrder(data: LeagueData): ProjectedPick[] {
     const feed = data.weeks[week]
     const isLiveCurrentWeek = week === data.currentWeek && week > data.lastScoredWeek
     const weeksAhead = Math.max(0, week - data.currentWeek)
-    const byeSet = new Set(feed?.byes ?? [])
+    const byeSet = new Set(
+      (feed?.byes ?? [])
+        .map((abbr) => normalizeNflTeam(abbr))
+        .filter((abbr): abbr is string => Boolean(abbr)),
+    )
     const weekMap = new Map<number, CompiledRosterWeek>()
 
     for (const roster of data.rosters) {

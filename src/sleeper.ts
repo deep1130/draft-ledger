@@ -149,6 +149,13 @@ const ESPN_TO_SLEEPER_TEAM: Record<string, string> = {
   LA: 'LAR',
 }
 
+const NFL_TEAMS = [
+  'ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE',
+  'DAL', 'DEN', 'DET', 'GB', 'HOU', 'IND', 'JAX', 'KC',
+  'LAC', 'LAR', 'LV', 'MIA', 'MIN', 'NE', 'NO', 'NYG',
+  'NYJ', 'PHI', 'PIT', 'SEA', 'SF', 'TB', 'TEN', 'WAS',
+] as const
+
 export function normalizeNflTeam(abbreviation?: string | null): string | undefined {
   if (!abbreviation) return undefined
   return ESPN_TO_SLEEPER_TEAM[abbreviation] ?? abbreviation
@@ -377,6 +384,7 @@ async function getWeekFeed(leagueId: string, season: string, week: number, signa
   const byes = (scoreboard.week?.teamsOnBye ?? [])
     .map((team) => normalizeNflTeam(team.abbreviation))
     .filter((team): team is string => Boolean(team))
+  const scheduledTeams = new Set<string>()
   const gameStates: Record<string, 'pre' | 'in' | 'post'> = {}
   const gameProgress: Record<string, number> = {}
   for (const event of scoreboard.events ?? []) {
@@ -405,13 +413,20 @@ async function getWeekFeed(leagueId: string, season: string, week: number, signa
     }
     for (const competitor of competition?.competitors ?? []) {
       const abbreviation = normalizeNflTeam(competitor.team?.abbreviation)
-      if (abbreviation && state) {
-        gameStates[abbreviation] = state
-        gameProgress[abbreviation] = progress
+      if (abbreviation) {
+        scheduledTeams.add(abbreviation)
+        if (state) {
+          gameStates[abbreviation] = state
+          gameProgress[abbreviation] = progress
+        }
       }
     }
   }
-  return { matchups, projections, byes, gameStates, gameProgress }
+  const eventCount = scoreboard.events?.length ?? 0
+  const finalByes = byes.length > 0 || eventCount < 10 || eventCount >= 16
+    ? byes
+    : NFL_TEAMS.filter((team) => !scheduledTeams.has(team))
+  return { matchups, projections, byes: finalByes, gameStates, gameProgress }
 }
 
 export async function loadLeagueData(leagueId: string, signal?: AbortSignal): Promise<LeagueData> {
