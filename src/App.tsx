@@ -231,6 +231,14 @@ function App() {
   const query = search.trim().toLowerCase()
   const visiblePicks = picks.filter((team) => `${team.name} ${team.pickHolder} ${team.record}`.toLowerCase().includes(query))
     .sort((first, second) => first.pick - second.pick)
+  const allVisibleExpanded = visiblePicks.length > 0 && visiblePicks.every((team) => expandedRosterIds.has(team.roster.roster_id))
+  const toggleExpandAll = useCallback(() => {
+    setExpandedRosterIds((prev) => {
+      const allOpen = visiblePicks.length > 0 && visiblePicks.every((team) => prev.has(team.roster.roster_id))
+      if (allOpen) return new Set()
+      return new Set(visiblePicks.map((team) => team.roster.roster_id))
+    })
+  }, [visiblePicks])
   const rookieYear = data ? upcomingRookieSeason(data.league) : DEFAULT_ROOKIE_YEAR
   const totalTeams = data?.rosters.length ?? 0
   const playoffTeamsCount = data ? Math.min(totalTeams, Math.max(0, Number(data.league.settings.playoff_teams ?? 6))) : 6
@@ -377,7 +385,7 @@ function App() {
       </section>
 
       <section className="projection-section">
-        <div className="section-heading"><div><p className="eyebrow">THE BOARD <span>·</span> {data?.league.name.toUpperCase() ?? 'SLEEPER DYNASTY'}</p><h2>{view === 'assets' ? 'Traded pick assets' : 'Projected rookie order'}</h2></div><div className="board-tools"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a team" aria-label="Find a team" /></div><div className="view-tabs" role="tablist" aria-label="Board view"><button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>PICK ORDER</button><button type="button" role="tab" aria-selected={view === 'assets'} className={view === 'assets' ? 'selected' : ''} onClick={() => setView('assets')}>PICK ASSETS</button></div></div></div>
+        <div className="section-heading"><div><p className="eyebrow">THE BOARD <span>·</span> {data?.league.name.toUpperCase() ?? 'SLEEPER DYNASTY'}</p><h2>{view === 'assets' ? 'Traded pick assets' : 'Projected rookie order'}</h2>{view === 'order' && picks.length > 0 && <p className="board-hint">Click any franchise row to inspect season Max PF contributors &amp; projected leaders.</p>}</div><div className="board-tools"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a team" aria-label="Find a team" /></div>{view === 'order' && visiblePicks.length > 0 && <button type="button" className={`expand-all-btn ${allVisibleExpanded ? 'active' : ''}`} onClick={toggleExpandAll} title={allVisibleExpanded ? 'Collapse all player breakdowns' : 'Expand all player breakdowns'}><ChevronDown size={13} className={`expand-chevron ${allVisibleExpanded ? 'open' : ''}`} /><span>{allVisibleExpanded ? 'COLLAPSE ALL' : 'EXPAND ALL'}</span></button>}<div className="view-tabs" role="tablist" aria-label="Board view"><button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>PICK ORDER</button><button type="button" role="tab" aria-selected={view === 'assets'} className={view === 'assets' ? 'selected' : ''} onClick={() => setView('assets')}>PICK ASSETS</button></div></div></div>
 
         {view === 'assets' ? <div className="table-wrap"><table><thead><tr><th>ORIGINAL PICK</th><th>CURRENT HOLDER</th><th>ROUND</th><th>SEASON</th><th>STATUS</th></tr></thead><tbody>
           {data?.tradedPicks.filter((pick) => Number(pick.season) === rookieYear).sort((a, b) => a.round - b.round || a.roster_id - b.roster_id).map((pick) => { const origin = data.rosters.find((roster) => roster.roster_id === pick.roster_id); const holder = data.rosters.find((roster) => roster.roster_id === pick.owner_id); return <tr className="asset-row" key={`${pick.season}-${pick.round}-${pick.roster_id}`}><td>{origin ? teamName(data, origin) : `Team ${pick.roster_id}`}</td><td className="holder-cell">{holder ? teamName(data, holder) : `Team ${pick.owner_id}`} {pick.round === 1 && <span className="asset-tag">LOTTERY TRACKED</span>}</td><td>ROUND {pick.round}</td><td>{pick.season}</td><td><span className="trade-mark"><ArrowUpRight size={13} /> TRADED</span></td></tr> })}
@@ -399,8 +407,13 @@ function App() {
                 }}
                 title="Expand player points contributed and projected remaining"
               >
-                <ChevronDown size={14} className={`expand-chevron ${isExpanded ? 'open' : ''}`} />
-                <span className="franchise-name" title={team.name}>{team.name}</span>
+                <span className="expand-pill">
+                  <ChevronDown size={13} className={`expand-chevron ${isExpanded ? 'open' : ''}`} />
+                </span>
+                <span className="franchise-text">
+                  <span className="franchise-name" title={team.name}>{team.name}</span>
+                  <span className="franchise-subhint">{isExpanded ? 'Hide breakdown' : 'Player breakdown'}</span>
+                </span>
               </button>
             </td>
             <td className="holder-cell" data-label={`${rookieYear} PICK HOLDER`} title={team.pickHolder}>{team.pickHolder}{team.pickHolderId !== team.roster.roster_id && <span className="asset-tag">TRADED</span>}</td>

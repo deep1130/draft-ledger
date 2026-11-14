@@ -11,7 +11,7 @@
 .franchise-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   max-width: 175px;
   padding: 0;
@@ -23,8 +23,49 @@
   cursor: pointer;
 }
 
+.expand-pill {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.lottery-row:hover .expand-pill,
+.playoff-row:hover .expand-pill,
+.franchise-toggle:hover .expand-pill,
+.franchise-toggle:focus-visible .expand-pill,
+.expanded-row .expand-pill {
+  border-color: var(--lottery-border);
+  background: var(--lottery-soft);
+}
+
+.franchise-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .franchise-toggle .franchise-name {
   min-width: 0;
+}
+
+.franchise-subhint {
+  margin-top: 2px;
+  color: var(--muted);
+  font: 500 9px var(--mono);
+  letter-spacing: 0.02em;
+  transition: color 0.16s ease;
+}
+
+.lottery-row:hover .franchise-subhint,
+.playoff-row:hover .franchise-subhint,
+.expanded-row .franchise-subhint {
+  color: var(--lottery-text);
 }
 
 .expand-chevron {
