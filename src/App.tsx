@@ -81,7 +81,6 @@ function App() {
   const [resolvedUserLabel, setResolvedUserLabel] = useState('')
   const [expandedRosterIds, setExpandedRosterIds] = useState<Set<number>>(() => new Set())
   const abortRef = useRef<AbortController | null>(null)
-  const autoExpandedLeagueRef = useRef<string>('')
 
   const toggleRosterExpand = useCallback((rosterId: number) => {
     setExpandedRosterIds((prev) => {
@@ -229,13 +228,6 @@ function App() {
   }, [initialId, recordRecentLeague])
 
   const picks = useMemo(() => (data ? projectDraftOrder(data) : []), [data])
-  useEffect(() => {
-    if (!data || picks.length === 0) return
-    const loadedId = data.league.league_id
-    if (autoExpandedLeagueRef.current === loadedId) return
-    autoExpandedLeagueRef.current = loadedId
-    setExpandedRosterIds(new Set([picks[0].roster.roster_id]))
-  }, [data, picks])
   const query = search.trim().toLowerCase()
   const visiblePicks = picks.filter((team) => `${team.name} ${team.pickHolder} ${team.record}`.toLowerCase().includes(query))
     .sort((first, second) => first.pick - second.pick)
